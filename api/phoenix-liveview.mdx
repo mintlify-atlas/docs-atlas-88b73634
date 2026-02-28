@@ -176,6 +176,102 @@ Invoked when the result of a `start_async/3` operation is available.
   The LiveView socket.
 </ParamField>
 
+### handle_call/3
+
+```elixir
+@callback handle_call(msg :: term, {pid, reference}, socket :: Socket.t()) ::
+  {:noreply, Socket.t()} | {:reply, term, Socket.t()}
+```
+
+Invoked to handle synchronous `call` messages from other Elixir processes via `GenServer.call/2`.
+
+<ParamField path="msg" type="term">
+  The message sent via `GenServer.call/2`.
+</ParamField>
+
+<ParamField path="from" type="{pid, reference}">
+  The caller's PID and reply reference.
+</ParamField>
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+<ResponseField name="return" type="{:noreply, socket} | {:reply, term, socket}">
+  Either `:noreply` for no response or `:reply` with a return value for the caller.
+</ResponseField>
+
+**Example:**
+
+```elixir
+def handle_call(:get_state, _from, socket) do
+  {:reply, socket.assigns, socket}
+end
+```
+
+### handle_cast/2
+
+```elixir
+@callback handle_cast(msg :: term, socket :: Socket.t()) ::
+  {:noreply, Socket.t()}
+```
+
+Invoked to handle asynchronous cast messages from other Elixir processes via `GenServer.cast/2`.
+
+<ParamField path="msg" type="term">
+  The message sent via `GenServer.cast/2`.
+</ParamField>
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+<ResponseField name="return" type="{:noreply, socket}">
+  Returns updated socket.
+</ResponseField>
+
+**Example:**
+
+```elixir
+def handle_cast({:update_data, data}, socket) do
+  {:noreply, assign(socket, :data, data)}
+end
+```
+
+### terminate/2
+
+```elixir
+@callback terminate(reason, socket :: Socket.t()) :: term
+  when reason: :normal | :shutdown | {:shutdown, :left | :closed | term}
+```
+
+Invoked when the LiveView is terminating. Use this to clean up resources.
+
+<ParamField path="reason" type=":normal | :shutdown | {:shutdown, reason}">
+  The termination reason:
+  - `:normal` - Normal termination
+  - `:shutdown` - Application shutdown
+  - `{:shutdown, :left}` - User navigated away
+  - `{:shutdown, :closed}` - Connection closed
+</ParamField>
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+<ResponseField name="return" type="term">
+  Return value is ignored.
+</ResponseField>
+
+**Example:**
+
+```elixir
+def terminate(_reason, socket) do
+  # Clean up resources
+  :ok
+end
+```
+
 ## Functions
 
 ### assign/3
@@ -421,6 +517,47 @@ stream_delete(socket, :songs, song)
   Item to delete.
 </ParamField>
 
+### stream_delete_by_dom_id/3
+
+Deletes a stream item by its DOM ID.
+
+```elixir
+stream_delete_by_dom_id(socket, :songs, "songs-123")
+```
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+<ParamField path="name" type="atom | string">
+  The stream name.
+</ParamField>
+
+<ParamField path="id" type="string">
+  The DOM ID of the item to delete.
+</ParamField>
+
+### stream_configure/3
+
+Configures a stream with options.
+
+```elixir
+stream_configure(socket, :songs, dom_id: &("song-#{&1.id}"))
+```
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+<ParamField path="name" type="atom | string">
+  The stream name.
+</ParamField>
+
+<ParamField path="opts" type="keyword">
+  Options:
+  - `:dom_id` - Function to generate DOM IDs
+</ParamField>
+
 ### assign_async/3
 
 Assigns keys asynchronously using a task.
@@ -493,6 +630,28 @@ send_update(pid, Cart, id: "cart", status: "cancelled")
   Assigns to update (must include `:id`).
 </ParamField>
 
+### cancel_async/3
+
+Cancels one or more async operations.
+
+```elixir
+cancel_async(socket, :org)
+cancel_async(socket, [:org, :profile])
+cancel_async(socket, async_result, :cancel)
+```
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+<ParamField path="keys" type="atom | list | AsyncResult.t()">
+  Async key(s) to cancel or an AsyncResult struct.
+</ParamField>
+
+<ParamField path="reason" type="term" default="{:shutdown, :cancel}">
+  The cancellation reason.
+</ParamField>
+
 ### attach_hook/4
 
 Attaches a function by name for a lifecycle stage.
@@ -551,6 +710,93 @@ get_connect_params(socket)["time_zone"]
 <ResponseField name="return" type="map | nil">
   Connect params on connected mount, `nil` when disconnected.
 </ResponseField>
+
+### get_connect_info/2
+
+Gets connection metadata by key.
+
+```elixir
+get_connect_info(socket, :peer_data)
+get_connect_info(socket, :x_headers)
+```
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+<ParamField path="key" type="atom">
+  Connection info key (`:peer_data`, `:x_headers`, `:uri`, `:user_agent`, etc.).
+</ParamField>
+
+<ResponseField name="return" type="term | nil">
+  Connection metadata value or `nil`.
+</ResponseField>
+
+### static_changed?/1
+
+Checks if static assets have changed since the LiveView was rendered.
+
+```elixir
+if static_changed?(socket) do
+  push_navigate(socket, to: "/")
+end
+```
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+<ResponseField name="return" type="boolean">
+  `true` if static assets changed during the connection.
+</ResponseField>
+
+### clear_flash/1
+
+Clears all flash messages.
+
+```elixir
+clear_flash(socket)
+```
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+### clear_flash/2
+
+Clears a specific flash message key.
+
+```elixir
+clear_flash(socket, :info)
+```
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+<ParamField path="key" type="atom">
+  Flash key to clear.
+</ParamField>
+
+### detach_hook/3
+
+Detaches a hook by ID and lifecycle stage.
+
+```elixir
+detach_hook(socket, :my_hook, :handle_event)
+```
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+<ParamField path="id" type="atom">
+  Hook identifier.
+</ParamField>
+
+<ParamField path="stage" type="atom">
+  Lifecycle stage (`:mount`, `:handle_params`, `:handle_event`, `:handle_info`, `:after_render`).
+</ParamField>
 
 ### allow_upload/3
 
