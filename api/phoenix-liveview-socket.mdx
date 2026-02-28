@@ -1,0 +1,257 @@
+---
+title: Phoenix.LiveView.Socket
+description: API reference for Phoenix.LiveView.Socket module
+---
+
+The LiveView socket for Phoenix Endpoints.
+
+## Overview
+
+The `Phoenix.LiveView.Socket` module provides the Phoenix Socket implementation for LiveView. It can be mounted directly in your endpoint or extended to create custom user sockets with additional channels.
+
+## Socket Configuration
+
+### Basic Setup
+
+Mount the socket directly in your endpoint:
+
+```elixir
+socket "/live", Phoenix.LiveView.Socket,
+  websocket: [connect_info: [session: @session_options]]
+```
+
+### Custom User Socket
+
+To share a transport connection between regular Phoenix channels and LiveView:
+
+```elixir
+defmodule MyAppWeb.UserSocket do
+  use Phoenix.LiveView.Socket
+
+  # Define your channel routes
+  channel "room:*", MyAppWeb.RoomChannel
+  channel "user:*", MyAppWeb.UserChannel
+
+  # Optional: Override connect/3 for custom logic
+  def connect(params, socket, connect_info) do
+    # Custom authentication or setup
+    {:ok, assign(socket, :user_id, params["user_id"])}
+  end
+
+  # Optional: Override id/1 for custom socket identification
+  def id(socket) do
+    "user_socket:#{socket.assigns.user_id}"
+  end
+end
+```
+
+Then mount your custom socket in the endpoint:
+
+```elixir
+socket "/live", MyAppWeb.UserSocket,
+  websocket: [connect_info: [session: @session_options]]
+```
+
+### Runtime Configuration
+
+If you need session options to be set at runtime, use an MFA tuple:
+
+```elixir
+socket "/live", MyAppWeb.UserSocket,
+  websocket: [connect_info: [session: {__MODULE__, :runtime_opts, []}]]
+
+def runtime_opts() do
+  Keyword.put(@session_options, :domain, host())
+end
+```
+
+## Socket Struct
+
+The LiveView socket has the following structure:
+
+### Fields
+
+<ResponseField name="id" type="binary()">
+  The socket identifier
+</ResponseField>
+
+<ResponseField name="endpoint" type="module()">
+  The Phoenix endpoint module
+</ResponseField>
+
+<ResponseField name="view" type="module()">
+  The current LiveView module
+</ResponseField>
+
+<ResponseField name="parent_pid" type="pid() | nil">
+  The PID of the parent LiveView, if any
+</ResponseField>
+
+<ResponseField name="root_pid" type="pid()">
+  The PID of the root LiveView process
+</ResponseField>
+
+<ResponseField name="router" type="module()">
+  The router module
+</ResponseField>
+
+<ResponseField name="assigns" type="map()">
+  The socket assigns containing application data
+</ResponseField>
+
+<ResponseField name="private" type="map()">
+  Private socket data not sent to the client
+</ResponseField>
+
+<ResponseField name="redirected" type="nil | tuple()">
+  Redirect information if the socket has been redirected
+</ResponseField>
+
+<ResponseField name="host_uri" type="URI.t() | :not_mounted_at_router">
+  The host URI or indicator that view is not mounted at router
+</ResponseField>
+
+<ResponseField name="transport_pid" type="pid() | nil">
+  The PID of the transport process
+</ResponseField>
+
+<ResponseField name="sticky?" type="boolean()">
+  Whether the socket is sticky (used for stateful components)
+</ResponseField>
+
+## Channels
+
+The socket automatically defines two channel routes:
+
+- `"lv:*"` - Phoenix.LiveView.Channel (LiveView connections)
+- `"lvu:*"` - Phoenix.LiveView.UploadChannel (File upload connections)
+
+## Callbacks
+
+### connect/3
+
+Called when the socket connects.
+
+```elixir
+connect(params, socket, connect_info)
+```
+
+<ParamField path="params" type="map()" required>
+  Connection parameters from the client
+</ParamField>
+
+<ParamField path="socket" type="Phoenix.Socket.t()" required>
+  The socket struct
+</ParamField>
+
+<ParamField path="connect_info" type="map()" required>
+  Additional connection information (session, peer data, etc.)
+</ParamField>
+
+<ResponseField name="result" type="{:ok, Phoenix.Socket.t()} | :error">
+  Returns `{:ok, socket}` to accept the connection or `:error` to reject it
+</ResponseField>
+
+Default implementation stores connect_info in socket private:
+
+```elixir
+def connect(_params, socket, connect_info) do
+  {:ok, put_in(socket.private[:connect_info], connect_info)}
+end
+```
+
+### id/1
+
+Returns the socket identifier for the connection.
+
+```elixir
+id(socket)
+```
+
+<ParamField path="socket" type="Phoenix.Socket.t()" required>
+  The socket struct
+</ParamField>
+
+<ResponseField name="id" type="binary() | nil">
+  The socket ID used for presence tracking and socket management
+</ResponseField>
+
+Default implementation returns the `live_socket_id` from session:
+
+```elixir
+def id(socket) do
+  socket.private.connect_info[:session]["live_socket_id"]
+end
+```
+
+## Using the Socket Module
+
+When you `use Phoenix.LiveView.Socket`, the following are automatically added:
+
+1. `use Phoenix.Socket` - Base Phoenix Socket behavior
+2. Channel definitions for LiveView and Upload channels
+3. Default `connect/3` callback (can be overridden)
+4. Default `id/1` callback (can be overridden)
+
+### Example Custom Socket
+
+```elixir
+defmodule MyAppWeb.UserSocket do
+  use Phoenix.LiveView.Socket
+
+  # Add custom channels
+  channel "notifications:*", MyAppWeb.NotificationChannel
+
+  # Custom connect logic
+  def connect(params, socket, connect_info) do
+    case authenticate(params, connect_info) do
+      {:ok, user_id} ->
+        {:ok, assign(socket, :user_id, user_id)}
+      
+      :error ->
+        :error
+    end
+  end
+
+  # Custom socket identification
+  def id(socket) do
+    "user_socket:#{socket.assigns.user_id}"
+  end
+
+  defp authenticate(params, connect_info) do
+    # Custom authentication logic
+    # ...
+  end
+end
+```
+
+## Type Definitions
+
+### t()
+
+The socket struct type:
+
+```elixir
+@type t :: %Phoenix.LiveView.Socket{
+  id: binary(),
+  endpoint: module(),
+  view: module(),
+  parent_pid: nil | pid(),
+  root_pid: pid(),
+  router: module(),
+  assigns: assigns(),
+  private: map(),
+  redirected: nil | tuple(),
+  host_uri: URI.t() | :not_mounted_at_router,
+  transport_pid: pid() | nil,
+  sticky?: boolean()
+}
+```
+
+### assigns()
+
+The assigns type:
+
+```elixir
+@type assigns :: map() | assigns_not_in_socket()
+```

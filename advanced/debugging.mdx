@@ -1,0 +1,469 @@
+---
+title: "Debugging LiveView"
+description: "Tools and techniques for debugging LiveView applications"
+---
+
+Debugging LiveView applications requires understanding both the server-side processes and client-side updates. This guide covers the tools and techniques available for inspecting and troubleshooting LiveView behavior.
+
+## The Debug Module
+
+Phoenix LiveView provides a `Phoenix.LiveView.Debug` module for runtime introspection of LiveView processes.
+
+### Listing LiveViews
+
+Find all currently connected LiveView processes:
+
+```elixir
+iex> Phoenix.LiveView.Debug.list_liveviews()
+[
+  %{
+    pid: #PID<0.123.0>,
+    view: MyAppWeb.PostLive.Index,
+    topic: "lv:phx-12345678",
+    transport_pid: #PID<0.122.0>
+  },
+  %{
+    pid: #PID<0.124.0>,
+    view: MyAppWeb.UserLive.Show,
+    topic: "lv:phx-87654321",
+    transport_pid: #PID<0.122.0>
+  }
+]
+```
+
+From `lib/phoenix_live_view/debug.ex:51-56`:
+
+```elixir
+def list_liveviews do
+  for pid <- Process.list(), dict = lv_process_dict(pid), not is_nil(dict) do
+    {Phoenix.LiveView, view, topic} = keyfind(dict, :"$process_label")
+    %{pid: pid, view: view, topic: topic, transport_pid: keyfind(dict, :"$phx_transport_pid")}
+  end
+end
+```
+
+<Note>
+The `transport_pid` groups LiveViews on the same page, useful for debugging multi-LiveView layouts.
+</Note>
+
+### Checking Process Type
+
+Verify if a process is a LiveView:
+
+```elixir
+iex> pid = #PID<0.123.0>
+iex> Phoenix.LiveView.Debug.liveview_process?(pid)
+true
+```
+
+### Inspecting Socket State
+
+Get the socket of a running LiveView:
+
+```elixir
+iex> {:ok, socket} = Phoenix.LiveView.Debug.socket(pid)
+iex> socket.assigns
+%{
+  __changed__: %{},
+  count: 5,
+  user: %User{id: 1, name: "Chris"},
+  live_action: :show
+}
+```
+
+<Warning>
+Accessing the socket returns a snapshot. The LiveView process continues running independently.
+</Warning>
+
+### Inspecting LiveComponents
+
+Get information about rendered LiveComponents:
+
+```elixir
+iex> {:ok, components} = Phoenix.LiveView.Debug.live_components(pid)
+iex> components
+[
+  %{
+    id: "user-form",
+    module: MyAppWeb.UserLive.FormComponent,
+    cid: 1,
+    assigns: %{
+      id: "user-form",
+      user: %User{},
+      form: %Phoenix.HTML.Form{},
+      myself: %Phoenix.LiveComponent.CID{cid: 1}
+    }
+  }
+]
+```
+
+## IEx Debugging
+
+### Using IEx.pry
+
+Set breakpoints in your LiveView:
+
+```elixir
+def handle_event("save", %{"user" => user_params}, socket) do
+  require IEx; IEx.pry()  # Breakpoint
+
+  case Users.update_user(socket.assigns.user, user_params) do
+    {:ok, user} ->
+      {:noreply, assign(socket, :user, user)}
+
+    {:error, changeset} ->
+      {:noreply, assign(socket, :changeset, changeset)}
+  end
+end
+```
+
+Start your app with:
+
+```bash
+iex -S mix phx.server
+```
+
+### dbg/2 Pipeline Debugging
+
+Use Elixir 1.14+ `dbg/2` for pipeline debugging:
+
+```elixir
+def handle_event("filter", %{"query" => query}, socket) do
+  users =
+    socket.assigns.all_users
+    |> Enum.filter(&String.contains?(&1.name, query))
+    |> dbg()  # Inspect intermediate result
+    |> Enum.take(10)
+
+  {:noreply, assign(socket, :users, users)}
+end
+```
+
+## Logging
+
+### Custom Logging
+
+Add debug logging to track LiveView lifecycle:
+
+```elixir
+defmodule MyAppWeb.PostLive.Index do
+  use MyAppWeb, :live_view
+  require Logger
+
+  def mount(_params, _session, socket) do
+    Logger.debug("Mounting PostLive.Index")
+    {:ok, socket}
+  end
+
+  def handle_params(params, uri, socket) do
+    Logger.debug("handle_params: #{inspect(params)}")
+    {:noreply, apply_action(socket, socket.assigns.live_action, params)}
+  end
+
+  def handle_event(event, params, socket) do
+    Logger.debug("Event: #{event}, Params: #{inspect(params)}")
+    # ... handle event
+  end
+end
+```
+
+### Telemetry Events
+
+LiveView emits telemetry events you can hook into:
+
+```elixir
+# In application.ex
+def start(_type, _args) do
+  :telemetry.attach_many(
+    "liveview-debug",
+    [
+      [:phoenix, :live_view, :mount, :start],
+      [:phoenix, :live_view, :mount, :stop],
+      [:phoenix, :live_view, :handle_params, :start],
+      [:phoenix, :live_view, :handle_params, :stop],
+      [:phoenix, :live_view, :handle_event, :start],
+      [:phoenix, :live_view, :handle_event, :stop],
+      [:phoenix, :live_component, :update, :start],
+      [:phoenix, :live_component, :update, :stop]
+    ],
+    &MyApp.Telemetry.handle_event/4,
+    nil
+  )
+
+  # ...
+end
+```
+
+```elixir
+defmodule MyApp.Telemetry do
+  require Logger
+
+  def handle_event([:phoenix, :live_view, :mount, :start], _measurements, metadata, _config) do
+    Logger.info("Mounting #{inspect(metadata.socket.view)}")
+  end
+
+  def handle_event([:phoenix, :live_view, :handle_event, :stop], measurements, metadata, _config) do
+    Logger.info(
+      "Event '#{metadata.event}' took #{measurements.duration / 1_000}µs"
+    )
+  end
+
+  def handle_event(_event, _measurements, _metadata, _config), do: :ok
+end
+```
+
+## Browser DevTools
+
+### LiveSocket Debug Mode
+
+Enable client-side debugging in `assets/js/app.js`:
+
+```javascript
+import {Socket} from "phoenix"
+import {LiveSocket} from "phoenix_live_view"
+
+let csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
+let liveSocket = new LiveSocket("/live", Socket, {
+  params: {_csrf_token: csrfToken},
+  debug: true  // Enable debug mode
+})
+```
+
+This logs all LiveView messages:
+
+```
+live_socket Joining 'lv:phx-12345678'
+live_socket Received: {"diff": {"0": {"0": "5"}}}
+live_socket Event: {"type": "click", "event": "increment"}
+```
+
+### Inspecting Patches
+
+View diffs sent from the server:
+
+```javascript
+// In browser console
+window.liveSocket.enableDebug()
+
+// Manually send event
+window.liveSocket.execJS(document.querySelector("#my-element"), "[[\"push\",{\"event\":\"click\"}]]")
+```
+
+### Latency Simulator
+
+Test with artificial latency:
+
+```javascript
+let liveSocket = new LiveSocket("/live", Socket, {
+  params: {_csrf_token: csrfToken},
+  debug: true,
+  latencySim: 1000  // 1 second delay
+})
+```
+
+## Common Issues
+
+### Memory Leaks
+
+Find LiveViews that aren't being garbage collected:
+
+```elixir
+iex> liveviews = Phoenix.LiveView.Debug.list_liveviews()
+iex> Enum.group_by(liveviews, & &1.view)
+%{
+  MyAppWeb.PostLive.Index => [...],  # 1 instance
+  MyAppWeb.DashboardLive => [...]    # 50 instances?! 🚨
+}
+```
+
+### Infinite Render Loops
+
+Detect when assigns cause re-renders:
+
+```elixir
+def handle_event("update", _, socket) do
+  Logger.debug("Before: #{inspect(socket.assigns.__changed__)}")
+
+  socket = assign(socket, :timestamp, DateTime.utc_now())
+
+  Logger.debug("After: #{inspect(socket.assigns.__changed__)}")
+
+  {:noreply, socket}
+end
+```
+
+<Warning>
+Never call `assign/3` in `render/1` or you'll create an infinite loop:
+
+```elixir
+# BAD: Infinite loop!
+def render(assigns) do
+  assigns = assign(assigns, :time, DateTime.utc_now())
+  ~H"""
+  {@time}
+  """
+end
+```
+</Warning>
+
+### Missing Updates
+
+If updates aren't appearing:
+
+1. **Check `phx-update` attribute**: Ensure containers have correct update strategy
+2. **Verify DOM IDs**: Stream items need proper IDs
+3. **Inspect `__changed__`**: Confirm assigns are marked as changed
+
+```elixir
+iex> {:ok, socket} = Phoenix.LiveView.Debug.socket(pid)
+iex> socket.assigns.__changed__
+%{}  # Nothing changed!
+```
+
+### JS Errors
+
+Check browser console for:
+
+- `Unable to join` - Connection issues
+- `unhandled event` - Missing event handlers
+- `error: invalid_target` - DOM element not found
+
+## Testing
+
+### LiveView Testing
+
+Use `Phoenix.LiveViewTest` for integration tests:
+
+```elixir
+test "increments counter", %{conn: conn} do
+  {:ok, view, html} = live(conn, "/counter")
+
+  assert html =~ "Count: 0"
+
+  # Simulate click
+  assert view
+         |> element("button", "Increment")
+         |> render_click() =~ "Count: 1"
+
+  # Inspect state
+  assert view |> assign(:count) == 1
+end
+```
+
+### Async Testing
+
+Debug async operations:
+
+```elixir
+test "loads data asynchronously", %{conn: conn} do
+  {:ok, view, _html} = live(conn, "/posts")
+
+  # Wait for async result
+  assert view
+         |> has_element?("#loading")
+
+  # Async completes
+  assert view
+         |> await_async_result(:posts)
+
+  refute view
+         |> has_element?("#loading")
+end
+```
+
+## Performance Profiling
+
+### ExProf
+
+Profile LiveView callbacks:
+
+```elixir
+defmodule MyAppWeb.PostLive.Index do
+  use MyAppWeb, :live_view
+  import ExProf.Macro
+
+  def handle_event("load", _, socket) do
+    profile do
+      posts = Posts.list_posts()  # Slow query?
+      {:noreply, assign(socket, :posts, posts)}
+    end
+  end
+end
+```
+
+### Benchee
+
+Benchmark rendering:
+
+```elixir
+alias Phoenix.LiveView.Renderer
+
+Benchee.run(%{
+  "render with 10 posts" => fn ->
+    socket = assign(socket, :posts, Enum.take(all_posts, 10))
+    Renderer.to_rendered(socket, MyAppWeb.PostLive.Index)
+  end,
+  "render with 100 posts" => fn ->
+    socket = assign(socket, :posts, Enum.take(all_posts, 100))
+    Renderer.to_rendered(socket, MyAppWeb.PostLive.Index)
+  end
+})
+```
+
+## Tips and Tricks
+
+<Tip>
+**Quick debugging in production:**
+
+```elixir
+# Attach to running app
+iex --sname debug --remsh myapp@hostname
+
+# List LiveViews
+iex> Phoenix.LiveView.Debug.list_liveviews()
+
+# Inspect specific LiveView
+iex> [lv | _] = Phoenix.LiveView.Debug.list_liveviews()
+iex> {:ok, socket} = Phoenix.LiveView.Debug.socket(lv.pid)
+iex> socket.assigns
+```
+
+**Enable verbose logging:**
+
+```elixir
+# config/dev.exs
+config :logger, level: :debug
+config :phoenix, :logger, :debug
+```
+
+**Track component updates:**
+
+```elixir
+def update(assigns, socket) do
+  IO.inspect(assigns, label: "Component assigns")
+  {:ok, assign(socket, assigns)}
+end
+```
+</Tip>
+
+## Best Practices
+
+1. **Use Debug module in development**: List and inspect LiveViews regularly
+2. **Add logging to callbacks**: Track lifecycle events
+3. **Enable browser debug mode**: See client-server communication
+4. **Write tests first**: Catch issues before manual debugging
+5. **Profile performance**: Measure, don't guess
+6. **Check telemetry**: Hook into built-in instrumentation
+
+## Summary
+
+Effective LiveView debugging combines:
+
+- **Server inspection**: `Phoenix.LiveView.Debug` module
+- **IEx tools**: `IEx.pry`, `dbg/2`
+- **Logging**: Custom logs and telemetry
+- **Browser DevTools**: Debug mode and network inspection
+- **Testing**: Automated tests catch regressions
+- **Profiling**: Measure performance bottlenecks
+
+With these tools, you can quickly diagnose and fix issues in your LiveView applications.

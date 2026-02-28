@@ -1,0 +1,256 @@
+---
+title: "Live Layouts"
+description: "Organize your LiveView applications with root and app layouts"
+---
+
+Your LiveView applications can be made of two layouts that work together to structure your application.
+
+## Layout Types
+
+### Root Layout
+
+The root layout typically contains the `<html>` definition alongside the head and body tags. Any content defined in the root layout will remain the same, even as you live navigate across LiveViews.
+
+- **File location**: Usually `root.html.heex` in your layouts folder
+- **Configuration**: Declared on the router with `put_root_layout`
+- **Content injection**: Calls `{@inner_content}` to inject the content rendered by the layout
+- **Rendering**: Only rendered on the initial HTTP request
+
+### App Layout
+
+The app layout is the dynamic layout part of your application. It often includes:
+- Menu and navigation
+- Sidebar
+- Flash messages
+- Other dynamic UI elements
+
+- **File location**: From Phoenix v1.8, explicitly rendered by calling the `<Layouts.app />` component
+- **Legacy**: In Phoenix v1.7 and earlier, configured as part of `lib/my_app_web.ex`
+
+<Info>
+Overall, these layouts are found in `components/layouts` and are embedded within `MyAppWeb.Layouts`.
+</Info>
+
+## Root Layout Configuration
+
+The root layout is rendered only on the initial request and has access to the `@conn` assign.
+
+### Router Configuration
+
+```elixir
+plug :put_root_layout, html: {MyAppWeb.Layouts, :root}
+```
+
+### LiveSession Configuration
+
+You can also set the root layout via the `:root_layout` option in `Phoenix.LiveView.Router.live_session/2`:
+
+```elixir
+live_session :default, root_layout: {MyAppWeb.Layouts, :root} do
+  live "/", HomeLive
+  live "/dashboard", DashboardLive
+end
+```
+
+## Updating Document Title
+
+Because the root layout from the Plug pipeline is rendered outside of LiveView, the contents cannot be dynamically changed. The one exception is the `<title>` of the HTML document.
+
+### Using `@page_title`
+
+Phoenix LiveView special cases the `@page_title` assign to allow dynamically updating the title of the page.
+
+<Steps>
+  <Step title="Set page_title in mount">
+    Assign the initial page title when the LiveView mounts.
+  </Step>
+  <Step title="Access in root layout">
+    Reference `@page_title` in your root layout template.
+  </Step>
+  <Step title="Update dynamically">
+    Change the page title by assigning to `page_title` in any callback.
+  </Step>
+</Steps>
+
+**In your LiveView:**
+
+```elixir
+def mount(_params, _session, socket) do
+  socket = assign(socket, page_title: "Latest Posts")
+  {:ok, socket}
+end
+```
+
+**In your root layout:**
+
+```heex
+<title>{@page_title}</title>
+```
+
+### Using `live_title/1` Component
+
+The `Phoenix.Component.live_title/1` component supports adding automatic prefix and suffix to the page title:
+
+```heex
+<Phoenix.Component.live_title default="Welcome" prefix="MyApp – ">
+  {assigns[:page_title]}
+</Phoenix.Component.live_title>
+```
+
+This renders as: `MyApp – Latest Posts`
+
+### Dynamic Updates
+
+Update the title at any time by assigning to `page_title`:
+
+```elixir
+def handle_info({:new_messages, count}, socket) do
+  {:noreply, assign(socket, page_title: "Latest Posts (#{count} new)")}
+end
+```
+
+<Note>
+Assigning `@page_title` updates the `document.title` directly via JavaScript, and therefore cannot be used to update any other part of the base layout.
+</Note>
+
+## Layout Limitations
+
+<Warning>
+If you find yourself needing to dynamically patch other parts of the base layout, such as injecting new scripts or styles into the `<head>` during live navigation, then a regular, non-live, page navigation should be used instead.
+</Warning>
+
+The root layout is static during live navigation. Only the document title can be updated dynamically.
+
+## Example: Root Layout
+
+```heex
+<!DOCTYPE html>
+<html lang="en" class="[scrollbar-gutter:stable]">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="csrf-token" content={get_csrf_token()} />
+    <.live_title default="MyApp" prefix="MyApp – ">
+      {assigns[:page_title]}
+    </.live_title>
+    <link phx-track-static rel="stylesheet" href={~p"/assets/app.css"} />
+    <script defer phx-track-static type="text/javascript" src={~p"/assets/app.js"}>
+    </script>
+  </head>
+  <body class="bg-white antialiased">
+    {@inner_content}
+  </body>
+</html>
+```
+
+## Example: App Layout
+
+```heex
+<header class="px-4 sm:px-6 lg:px-8">
+  <div class="flex items-center justify-between border-b border-zinc-100 py-3">
+    <div class="flex items-center gap-4">
+      <a href="/">
+        <img src={~p"/images/logo.svg"} width="36" />
+      </a>
+      <p class="bg-brand/5 text-brand rounded-full px-2 font-medium leading-6">
+        v{Application.spec(:my_app, :vsn)}
+      </p>
+    </div>
+    <div class="flex items-center gap-4 font-semibold leading-6 text-zinc-900">
+      <a href="/dashboard" class="hover:text-zinc-700">
+        Dashboard
+      </a>
+      <a href="/settings" class="hover:text-zinc-700">
+        Settings
+      </a>
+    </div>
+  </div>
+</header>
+<main class="px-4 py-20 sm:px-6 lg:px-8">
+  <div class="mx-auto max-w-2xl">
+    <.flash_group flash={@flash} />
+    {@inner_content}
+  </div>
+</main>
+```
+
+## Using Different Layouts Per LiveView
+
+You can specify different layouts for different LiveViews:
+
+### In mount/3
+
+```elixir
+def mount(_params, _session, socket) do
+  {:ok, socket, layout: {MyAppWeb.Layouts, :admin}}
+end
+```
+
+### In use Phoenix.LiveView
+
+```elixir
+use MyAppWeb, :live_view, layout: {MyAppWeb.Layouts, :admin}
+```
+
+### In live_session
+
+```elixir
+live_session :admin, layout: {MyAppWeb.Layouts, :admin} do
+  live "/admin", AdminLive
+  live "/admin/users", AdminUsersLive
+end
+```
+
+## Layout Best Practices
+
+1. **Keep root layout static**: Only dynamic content should be the page title
+2. **Use app layout for navigation**: Place menus, sidebars, and other dynamic UI in the app layout
+3. **Group by live_session**: Use `live_session` to share layouts across related LiveViews
+4. **Set defaults wisely**: Configure default layouts in `lib/my_app_web.ex` for consistency
+5. **Update title for context**: Change `@page_title` to reflect the current page or notification count
+
+## Common Patterns
+
+### Notification Count in Title
+
+```elixir
+def handle_info({:new_notification, count}, socket) do
+  title = if count > 0, do: "(#{count}) Dashboard", else: "Dashboard"
+  {:noreply, assign(socket, page_title: title)}
+end
+```
+
+### Breadcrumbs in App Layout
+
+```heex
+<nav aria-label="Breadcrumb">
+  <ol class="flex items-center gap-2">
+    <li :for={crumb <- @breadcrumbs}>
+      <.link navigate={crumb.path}>{crumb.label}</.link>
+    </li>
+  </ol>
+</nav>
+{@inner_content}
+```
+
+### Flash Messages
+
+Flash messages are typically shown in the app layout:
+
+```heex
+<.flash_group flash={@flash} />
+{@inner_content}
+```
+
+## Debugging Layouts
+
+If your layout isn't rendering as expected:
+
+1. **Check the router**: Verify `put_root_layout` is called
+2. **Check live_session**: Ensure the layout option is set correctly
+3. **Inspect assigns**: Use `IO.inspect(socket.assigns)` to see available assigns
+4. **Verify @inner_content**: Make sure your layout calls `{@inner_content}`
+
+<Tip>
+Use the browser's developer tools to inspect which layout is being rendered and check for any CSS or JavaScript errors.
+</Tip>

@@ -1,0 +1,177 @@
+---
+title: "Live Navigation"
+description: "Navigate between pages without full reloads using push_patch and push_navigate"
+---
+
+LiveView provides functionality to allow page navigation using the [browser's pushState API](https://developer.mozilla.org/en-US/docs/Web/API/History_API). With live navigation, the page is updated without a full page reload.
+
+## Navigation Methods
+
+You can trigger live navigation in two ways:
+
+<Steps>
+  <Step title="From the client">
+    Pass either `patch={url}` or `navigate={url}` to the `Phoenix.Component.link/1` component.
+  </Step>
+  <Step title="From the server">
+    Use `Phoenix.LiveView.push_patch/2` or `Phoenix.LiveView.push_navigate/2`.
+  </Step>
+</Steps>
+
+## Patch vs Navigate
+
+Here is a quick breakdown:
+
+- `<.link href={...}>` and `redirect/2` are HTTP-based, work everywhere, and perform full page reloads
+- `<.link navigate={...}>` and `push_navigate/2` work across LiveViews in the same session. They mount a new LiveView while keeping the current layout
+- `<.link patch={...}>` and `push_patch/2` update the current LiveView and send only the minimal diff while also maintaining the scroll position
+
+### Using Patch
+
+The "patch" operations must be used when you want to navigate to the current LiveView, simply updating the URL and the current parameters, without mounting a new LiveView.
+
+```heex
+<.link patch={~p"/pages/#{@page + 1}"}>Next</.link>
+```
+
+Or in a LiveView:
+
+```elixir
+{:noreply, push_patch(socket, to: ~p"/pages/#{@page + 1}")}
+```
+
+When patch is used, the `handle_params/3` callback is invoked and the minimal set of changes are sent to the client.
+
+### Using Navigate
+
+The "navigate" operations must be used when you want to dismount the current LiveView and mount a new one. You can only "navigate" between LiveViews in the same session.
+
+```heex
+<.link navigate={~p"/users"}>View Users</.link>
+```
+
+While redirecting, a `phx-loading` class is added to the LiveView, which can be used to indicate to the user a new page is being loaded.
+
+<Warning>
+If you attempt to patch to another LiveView or navigate across live sessions, a full page reload is triggered.
+</Warning>
+
+## The `handle_params/3` Callback
+
+The `handle_params/3` callback is invoked:
+- After `mount/3` and before the initial render
+- Every time `<.link patch={...}>` or `push_patch/2` are used
+
+It receives the request parameters as first argument, the url as second, and the socket as third.
+
+### Example: Live Sorting
+
+Imagine you have a `UserTable` LiveView to show all users in the system:
+
+```elixir
+# Router
+live "/users", UserTable
+```
+
+To add live sorting:
+
+```heex
+<.link patch={~p"/users?sort_by=name"}>Sort by name</.link>
+```
+
+In your LiveView:
+
+```elixir
+def handle_params(params, _uri, socket) do
+  socket =
+    case params["sort_by"] do
+      sort_by when sort_by in ~w(name company) -> assign(socket, sort_by: sort_by)
+      _ -> socket
+    end
+
+  {:noreply, load_users(socket)}
+end
+```
+
+<Note>
+You must never trust the received params. Always validate the user input and change the state accordingly.
+</Note>
+
+### When to Use `mount/3` vs `handle_params/3`
+
+Generally speaking, data should always be loaded on `mount/3`, since `mount/3` is invoked once per LiveView life-cycle. Only the params you expect to be changed via `<.link patch={...}>` or `push_patch/2` must be loaded on `handle_params/3`.
+
+**Example: Blog with Paginated Comments**
+
+For a blog post at `/blog/posts/:post_id` with paginated comments at `/blog/posts/:post_id?page=X`:
+
+- Access `"post_id"` on `mount/3` to load the post
+- Access the page of comments on `handle_params/3` to handle pagination
+
+```elixir
+def mount(%{"post_id" => post_id}, _session, socket) do
+  {:ok, assign(socket, post: Blog.get_post!(post_id))}
+end
+
+def handle_params(params, _uri, socket) do
+  page = params["page"] || "1"
+  comments = Blog.list_comments(socket.assigns.post, page: page)
+  {:noreply, assign(socket, comments: comments, page: page)}
+end
+```
+
+## Replace Page Address
+
+LiveView allows the current browser URL to be replaced without polluting the browser's history. This is useful when you want certain events to change the URL but without adding to the history.
+
+```heex
+<.link patch={~p"/users?sort_by=name"} replace>Sort by name</.link>
+```
+
+Or from the server:
+
+```elixir
+{:noreply, push_patch(socket, to: ~p"/users?sort_by=name", replace: true)}
+```
+
+## Multiple LiveViews in the Same Page
+
+LiveView allows you to have multiple LiveViews in the same page by calling `Phoenix.Component.live_render/3` in your templates. However, only the LiveViews defined directly in your router can use the Live Navigation functionality described here.
+
+<Info>
+This is important because LiveViews work closely with your router, guaranteeing you can only navigate to known routes.
+</Info>
+
+## API Reference
+
+### `push_patch/2`
+
+Navigates to the same LiveView with new parameters.
+
+```elixir
+push_patch(socket, to: path, replace: boolean)
+```
+
+**Options:**
+- `:to` - The path to navigate to (required)
+- `:replace` - Whether to replace the current history entry (default: `false`)
+
+### `push_navigate/2`
+
+Navigates to a different LiveView in the same session.
+
+```elixir
+push_navigate(socket, to: path, replace: boolean)
+```
+
+**Options:**
+- `:to` - The path to navigate to (required)
+- `:replace` - Whether to replace the current history entry (default: `false`)
+
+## Best Practices
+
+1. **Use patch for same LiveView**: When updating parameters within the same LiveView (filtering, sorting, pagination)
+2. **Use navigate for different LiveViews**: When moving to a completely different page
+3. **Validate params**: Always validate parameters in `handle_params/3` - never trust user input
+4. **Load static data in mount**: Load data that doesn't change based on URL params in `mount/3`
+5. **Keep URLs bookmarkable**: Store important UI state in URL parameters to make pages shareable

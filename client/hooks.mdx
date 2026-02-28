@@ -1,0 +1,600 @@
+---
+title: "Client Hooks"
+description: "Client-side JavaScript lifecycle hooks for Phoenix LiveView elements"
+---
+
+Client hooks provide lifecycle callbacks for custom client-side JavaScript when elements are added, updated, or removed by the server.
+
+## Overview
+
+Hooks allow you to:
+- Initialize third-party JavaScript libraries
+- Manage client-side state
+- Handle complex DOM interactions
+- Integrate with external APIs
+- Build custom UI components
+
+<Note>
+For simpler client-side operations, consider using [JS Commands](/client/js-commands) instead of hooks.
+</Note>
+
+## Basic Hook Setup
+
+### 1. Define the Hook
+
+```javascript
+/**
+ * @type {import("phoenix_live_view").HooksOptions}
+ */
+let Hooks = {}
+
+Hooks.PhoneNumber = {
+  mounted() {
+    this.el.addEventListener("input", e => {
+      let match = this.el.value.replace(/\D/g, "").match(/^(\d{3})(\d{3})(\d{4})$/)
+      if(match) {
+        this.el.value = `${match[1]}-${match[2]}-${match[3]}`
+      }
+    })
+  }
+}
+
+let liveSocket = new LiveSocket("/live", Socket, {hooks: Hooks})
+```
+
+### 2. Use in Template
+
+```heex
+<input type="text" 
+       name="user[phone_number]" 
+       id="user-phone-number" 
+       phx-hook="PhoneNumber" />
+```
+
+<Warning>
+When using `phx-hook`, a unique DOM ID must always be set.
+</Warning>
+
+## Lifecycle Callbacks
+
+<Tabs>
+  <Tab title="mounted">
+    Called when element is added to DOM and LiveView has finished mounting:
+    
+    ```javascript
+    mounted() {
+      console.log("Element mounted:", this.el)
+      // Initialize libraries, add event listeners
+    }
+    ```
+    
+    <Note>
+    Outside a LiveView context, only `mounted` is invoked for elements present at DOM ready.
+    </Note>
+  </Tab>
+  
+  <Tab title="updated">
+    Called when element has been updated by the server:
+    
+    ```javascript
+    updated() {
+      console.log("Element updated")
+      // Refresh UI, sync state
+    }
+    ```
+    
+    <Warning>
+    `window.location` may not reflect current URL during this callback. Use `phx:navigate` event for navigation-aware logic.
+    </Warning>
+  </Tab>
+  
+  <Tab title="beforeUpdate">
+    Called just before element is updated. Must be synchronous:
+    
+    ```javascript
+    beforeUpdate() {
+      // Save scroll position, prepare for update
+      this.scrollTop = this.el.scrollTop
+    }
+    ```
+    
+    <Warning>
+    This callback must be synchronous—it cannot be deferred or cancelled.
+    </Warning>
+  </Tab>
+  
+  <Tab title="destroyed">
+    Called when element is removed from the page:
+    
+    ```javascript
+    destroyed() {
+      console.log("Element destroyed")
+      // Cleanup resources, remove listeners
+    }
+    ```
+  </Tab>
+  
+  <Tab title="disconnected">
+    Called when parent LiveView disconnects from server:
+    
+    ```javascript
+    disconnected() {
+      console.log("Connection lost")
+      // Pause animations, show offline UI
+    }
+    ```
+  </Tab>
+  
+  <Tab title="reconnected">
+    Called when parent LiveView reconnects to server:
+    
+    ```javascript
+    reconnected() {
+      console.log("Connection restored")
+      // Resume animations, hide offline UI
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Hook Attributes
+
+Hooks have access to these attributes:
+
+| Attribute | Description |
+|-----------|-------------|
+| `this.el` | The bound DOM node |
+| `this.liveSocket` | The LiveSocket instance |
+
+## Hook Methods
+
+### Push Events
+
+<Tabs>
+  <Tab title="pushEvent">
+    Push events to the LiveView server:
+    
+    ```javascript
+    // With callback
+    this.pushEvent("save", {data: "value"}, (reply, ref) => {
+      console.log("Server replied:", reply)
+    })
+    
+    // Returns promise if no callback
+    const reply = await this.pushEvent("save", {data: "value"})
+    ```
+  </Tab>
+  
+  <Tab title="pushEventTo">
+    Push to specific LiveView or LiveComponent:
+    
+    ```javascript
+    // Using selector
+    this.pushEventTo("#my-component", "update", {value: 42})
+    
+    // Using element reference
+    this.pushEventTo(this.el, "update", {value: 42})
+    
+    // Returns Promise.allSettled() if multiple targets
+    const results = await this.pushEventTo(".components", "update", {})
+    ```
+  </Tab>
+</Tabs>
+
+### Handle Events
+
+<Tabs>
+  <Tab title="handleEvent">
+    Handle events pushed from server:
+    
+    ```javascript
+    mounted() {
+      this.handleEvent("highlight", ({duration}) => {
+        this.el.classList.add("highlight")
+        setTimeout(() => {
+          this.el.classList.remove("highlight")
+        }, duration)
+      })
+    }
+    ```
+  </Tab>
+  
+  <Tab title="removeHandleEvent">
+    Remove an event handler:
+    
+    ```javascript
+    mounted() {
+      this.ref = this.handleEvent("myevent", callback)
+    }
+    
+    destroyed() {
+      this.removeHandleEvent(this.ref)
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Upload Methods
+
+<Tabs>
+  <Tab title="upload">
+    Inject files into an uploader:
+    
+    ```javascript
+    this.upload("avatar", files)
+    ```
+  </Tab>
+  
+  <Tab title="uploadTo">
+    Upload to specific LiveView/Component:
+    
+    ```javascript
+    this.uploadTo("#my-component", "avatar", files)
+    ```
+  </Tab>
+</Tabs>
+
+### JS Commands
+
+Access JS command interface:
+
+```javascript
+mounted() {
+  this.js()
+    .show(this.el, {transition: "fade-in"})
+    .addClass(this.el, "active")
+}
+```
+
+## Complete Hook Examples
+
+### Chart Integration
+
+<CodeGroup>
+
+```heex Template
+<div id="chart" phx-hook="Chart" data-points={Jason.encode!(@points)}></div>
+```
+
+```javascript Hook
+Hooks.Chart = {
+  mounted() {
+    const points = JSON.parse(this.el.dataset.points)
+    this.chart = new Chart(this.el, {data: points})
+    
+    this.handleEvent("points", ({points}) => {
+      this.chart.addPoints(points)
+    })
+  },
+  
+  updated() {
+    const points = JSON.parse(this.el.dataset.points)
+    this.chart.setData(points)
+  },
+  
+  destroyed() {
+    this.chart.destroy()
+  }
+}
+```
+
+```elixir Server
+def handle_info(:new_points, socket) do
+  {:noreply, push_event(socket, "points", %{points: new_points})}
+end
+```
+
+</CodeGroup>
+
+### Infinite Scroll
+
+<CodeGroup>
+
+```heex Template
+<div id="infinite-scroll" 
+     phx-hook="InfiniteScroll" 
+     data-page={@page}>
+  <!-- Scrollable content -->
+</div>
+```
+
+```javascript Hook
+Hooks.InfiniteScroll = {
+  page() { 
+    return parseInt(this.el.dataset.page) 
+  },
+  
+  mounted(){
+    this.pending = this.page()
+    this.observer = new IntersectionObserver(
+      entries => this.handleIntersect(entries),
+      {threshold: 1.0}
+    )
+    
+    const sentinel = this.el.querySelector("#sentinel")
+    if (sentinel) this.observer.observe(sentinel)
+  },
+  
+  handleIntersect(entries) {
+    const entry = entries[0]
+    if (entry.isIntersecting && this.pending === this.page()) {
+      this.pending = this.page() + 1
+      this.pushEvent("load-more", {})
+    }
+  },
+  
+  updated() { 
+    this.pending = this.page() 
+  },
+  
+  destroyed() {
+    if (this.observer) this.observer.disconnect()
+  }
+}
+```
+
+</CodeGroup>
+
+### Map Integration
+
+```javascript
+Hooks.Map = {
+  mounted() {
+    const {lat, lng, zoom} = this.el.dataset
+    this.map = new MapLibrary.Map(this.el, {
+      center: [parseFloat(lat), parseFloat(lng)],
+      zoom: parseInt(zoom)
+    })
+    
+    this.map.on("moveend", () => {
+      const center = this.map.getCenter()
+      this.pushEvent("map-moved", {
+        lat: center.lat,
+        lng: center.lng,
+        zoom: this.map.getZoom()
+      })
+    })
+    
+    this.handleEvent("add-marker", ({lat, lng, title}) => {
+      new MapLibrary.Marker({lat, lng})
+        .setTitle(title)
+        .addTo(this.map)
+    })
+  },
+  
+  destroyed() {
+    this.map.remove()
+  }
+}
+```
+
+## Colocated Hooks
+
+Define hooks next to component code:
+
+```elixir
+def phone_number_input(assigns) do
+  ~H"""
+  <input type="text" 
+         name="user[phone_number]" 
+         id="user-phone-number" 
+         phx-hook=".PhoneNumber" />
+  <script :type={Phoenix.LiveView.ColocatedHook} name=".PhoneNumber">
+    export default {
+      mounted() {
+        this.el.addEventListener("input", e => {
+          let match = this.el.value.replace(/\D/g, "").match(/^(\d{3})(\d{3})(\d{4})$/)
+          if(match) {
+            this.el.value = `${match[1]}-${match[2]}-${match[3]}`
+          }
+        })
+      }
+    }
+  </script>
+  """
+end
+```
+
+### Importing Colocated Hooks
+
+```javascript
+import {hooks as colocatedHooks} from "phoenix-colocated/my_app"
+
+let liveSocket = new LiveSocket("/live", Socket, {
+  hooks: {...colocatedHooks, ...Hooks}
+})
+```
+
+<Note>
+Colocated hooks use dot syntax (`.HookName`) and are automatically namespaced by module name.
+</Note>
+
+## Class-Based Hooks
+
+Define hooks as classes:
+
+```javascript
+import { ViewHook } from "phoenix_live_view"
+
+class DataTable extends ViewHook {
+  constructor() {
+    super()
+    this.page = 1
+  }
+  
+  mounted() {
+    this.initTable()
+  }
+  
+  initTable() {
+    // Initialize DataTable library
+  }
+  
+  updated() {
+    this.refreshTable()
+  }
+  
+  destroyed() {
+    this.cleanup()
+  }
+}
+
+let liveSocket = new LiveSocket(..., {
+  hooks: { DataTable }
+})
+```
+
+## Advanced: DOM Integration
+
+Preserve client-side DOM modifications across server updates:
+
+```javascript
+let liveSocket = new LiveSocket("/live", Socket, {
+  hooks: Hooks,
+  dom: {
+    onBeforeElUpdated(from, to) {
+      // Preserve data-js-* attributes
+      for (const attr of from.attributes) {
+        if (attr.name.startsWith("data-js-")) {
+          to.setAttribute(attr.name, attr.value)
+        }
+      }
+      
+      // Preserve scroll position
+      if (from.scrollTop > 0) {
+        to.scrollTop = from.scrollTop
+      }
+    }
+  }
+})
+```
+
+<Warning>
+`onBeforeElUpdated` is called just before patching—it cannot be deferred or cancelled.
+</Warning>
+
+## Best Practices
+
+<Tabs>
+  <Tab title="Resource Cleanup">
+    Always clean up in `destroyed()`:
+    
+    ```javascript
+    mounted() {
+      this.timer = setInterval(() => this.update(), 1000)
+      this.listener = () => this.handleResize()
+      window.addEventListener("resize", this.listener)
+    }
+    
+    destroyed() {
+      clearInterval(this.timer)
+      window.removeEventListener("resize", this.listener)
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Event Scoping">
+    Namespace events for components with siblings:
+    
+    ```javascript
+    mounted() {
+      this.handleEvent(`update-${this.el.id}`, callback)
+    }
+    ```
+    
+    ```elixir
+    push_event(socket, "update-#{id}", data)
+    ```
+  </Tab>
+  
+  <Tab title="State Management">
+    Store state on the hook instance:
+    
+    ```javascript
+    mounted() {
+      this.state = {count: 0, active: false}
+    }
+    
+    updated() {
+      // Access this.state
+    }
+    ```
+  </Tab>
+  
+  <Tab title="TypeScript Support">
+    Use TypeScript definitions:
+    
+    ```typescript
+    import type { Hook } from "phoenix_live_view"
+    
+    const MyHook: Hook = {
+      mounted() {
+        // Type-safe hook code
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Common Patterns
+
+### Debounced Push
+
+```javascript
+Hooks.Search = {
+  mounted() {
+    this.timeout = null
+    this.el.addEventListener("input", e => {
+      clearTimeout(this.timeout)
+      this.timeout = setTimeout(() => {
+        this.pushEvent("search", {query: e.target.value})
+      }, 300)
+    })
+  }
+}
+```
+
+### Two-way Data Binding
+
+```javascript
+Hooks.Slider = {
+  mounted() {
+    // Client to server
+    this.el.addEventListener("change", e => {
+      this.pushEvent("value-changed", {value: e.target.value})
+    })
+    
+    // Server to client
+    this.handleEvent(`update-${this.el.id}`, ({value}) => {
+      this.el.value = value
+    })
+  }
+}
+```
+
+### Loading States
+
+```javascript
+Hooks.AsyncButton = {
+  mounted() {
+    this.el.addEventListener("click", async e => {
+      this.el.disabled = true
+      this.el.textContent = "Loading..."
+      
+      try {
+        await this.pushEvent("submit", {})
+      } finally {
+        this.el.disabled = false
+        this.el.textContent = "Submit"
+      }
+    })
+  }
+}
+```
+
+## See Also
+
+- [JS Interop](/client/js-interop) - JavaScript integration overview
+- [JS Commands](/client/js-commands) - Declarative client operations
+- [Bindings](/client/bindings) - DOM event bindings
+- [External Uploads](/client/external-uploads) - Upload integration

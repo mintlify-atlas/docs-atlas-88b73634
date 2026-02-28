@@ -1,0 +1,474 @@
+---
+title: "JS Commands"
+description: "Execute JavaScript utility operations on the client with Phoenix.LiveView.JS"
+---
+
+The `Phoenix.LiveView.JS` module provides commands for executing JavaScript utility operations on the client without writing custom JavaScript code.
+
+## Overview
+
+JS commands are DOM-patch aware, meaning operations applied by the JS APIs persist across server updates. They support common client-side needs like:
+
+- Adding/removing CSS classes
+- Setting/removing attributes
+- Showing/hiding content
+- Animations and transitions
+- Pushing enhanced events to the server
+
+## Client Utility Commands
+
+### Visibility
+
+<Tabs>
+  <Tab title="show">
+    Show hidden elements with optional transitions:
+    
+    ```heex
+    <div id="modal" class="hidden">
+      My Modal
+    </div>
+    
+    <button phx-click={JS.show(to: "#modal", transition: "fade-in")}>
+      Show Modal
+    </button>
+    ```
+    
+    **Options:**
+    - `:to` - DOM selector (default: interacted element)
+    - `:transition` - CSS classes or 3-tuple for animation
+    - `:time` - Transition duration in ms (default: 200)
+    - `:display` - Display value (default: `"block"`)
+    - `:blocking` - Block UI during transition (default: `true`)
+  </Tab>
+  
+  <Tab title="hide">
+    Hide visible elements with optional transitions:
+    
+    ```heex
+    <button phx-click={JS.hide(to: "#modal", transition: "fade-out")}>
+      Hide Modal
+    </button>
+    ```
+    
+    **Options:**
+    - `:to` - DOM selector
+    - `:transition` - CSS classes or 3-tuple
+    - `:time` - Duration in ms (default: 200)
+    - `:blocking` - Block UI (default: `true`)
+  </Tab>
+  
+  <Tab title="toggle">
+    Toggle visibility based on current state:
+    
+    ```heex
+    <button phx-click={JS.toggle(to: "#modal", in: "fade-in", out: "fade-out")}>
+      Toggle Modal
+    </button>
+    ```
+    
+    **Options:**
+    - `:to` - DOM selector
+    - `:in` - CSS classes for showing
+    - `:out` - CSS classes for hiding
+    - `:time` - Duration in ms (default: 200)
+    - `:display` - Display value (default: `"block"`)
+    - `:blocking` - Block UI (default: `true`)
+  </Tab>
+</Tabs>
+
+### CSS Classes
+
+<Tabs>
+  <Tab title="add_class">
+    Add CSS classes to elements:
+    
+    ```heex
+    <button phx-click={JS.add_class("highlight underline", to: "#item")}>
+      Highlight
+    </button>
+    ```
+    
+    **Options:**
+    - `:to` - DOM selector
+    - `:transition` - Animation classes
+    - `:time` - Duration in ms
+    - `:blocking` - Block UI (default: `true`)
+  </Tab>
+  
+  <Tab title="remove_class">
+    Remove CSS classes from elements:
+    
+    ```heex
+    <button phx-click={JS.remove_class("highlight underline", to: "#item")}>
+      Remove Highlight
+    </button>
+    ```
+  </Tab>
+  
+  <Tab title="toggle_class">
+    Add or remove classes based on presence:
+    
+    ```heex
+    <button phx-click={JS.toggle_class("active", to: "#item")}>
+      Toggle Active
+    </button>
+    ```
+  </Tab>
+</Tabs>
+
+### Attributes
+
+<Tabs>
+  <Tab title="set_attribute">
+    Set an attribute on elements:
+    
+    ```heex
+    <button phx-click={JS.set_attribute({"aria-expanded", "true"}, to: "#dropdown")}>
+      Expand
+    </button>
+    ```
+    
+    <Warning>
+    Cannot set DOM properties like input `value`. Use `JS.dispatch/2` with custom events instead.
+    </Warning>
+  </Tab>
+  
+  <Tab title="remove_attribute">
+    Remove an attribute from elements:
+    
+    ```heex
+    <button phx-click={JS.remove_attribute("aria-expanded", to: "#dropdown")}>
+      Collapse
+    </button>
+    ```
+  </Tab>
+  
+  <Tab title="toggle_attribute">
+    Toggle between two attribute values:
+    
+    ```heex
+    <button phx-click={JS.toggle_attribute({"aria-expanded", "true", "false"}, to: "#dropdown")}>
+      Toggle
+    </button>
+    ```
+  </Tab>
+  
+  <Tab title="ignore_attributes">
+    Mark attributes to skip during DOM patching:
+    
+    ```heex
+    <dialog phx-mounted={JS.ignore_attributes("open")}>
+      <!-- open attribute won't be patched by server -->
+    </dialog>
+    ```
+    
+    Accepts single attribute, list, or wildcards like `"data-*"`.
+  </Tab>
+</Tabs>
+
+### Transitions
+
+Apply temporary CSS transitions:
+
+```heex
+<div id="item">My Item</div>
+<button phx-click={JS.transition("shake", to: "#item")}>Shake!</button>
+```
+
+**3-tuple syntax:**
+
+```heex
+<div phx-mounted={JS.transition({"ease-out duration-300", "opacity-0", "opacity-100"}, time: 300)}>
+  Fades in on mount
+</div>
+```
+
+<Note>
+The `time` option should match the duration in your CSS classes for smooth animations.
+</Note>
+
+### Focus Management
+
+<Tabs>
+  <Tab title="focus">
+    Send focus to an element:
+    
+    ```elixir
+    JS.focus(to: "#search-input")
+    ```
+  </Tab>
+  
+  <Tab title="focus_first">
+    Focus first focusable child:
+    
+    ```elixir
+    JS.focus_first(to: "#modal")
+    ```
+  </Tab>
+  
+  <Tab title="push_focus">
+    Save current focus to restore later:
+    
+    ```elixir
+    JS.push_focus(to: "#my-button")
+    ```
+  </Tab>
+  
+  <Tab title="pop_focus">
+    Restore previously pushed focus:
+    
+    ```elixir
+    JS.pop_focus()
+    ```
+  </Tab>
+</Tabs>
+
+## Enhanced Push Events
+
+Customize server event handling with additional options:
+
+```heex
+<button phx-click={JS.push("inc", 
+                           loading: ".thermo", 
+                           target: @myself, 
+                           value: %{limit: 40})}>
+  +
+</button>
+```
+
+### Options
+
+- `:target` - Selector or component ID (overrides `phx-target`)
+- `:loading` - Selector to apply loading classes to
+- `:page_loading` - Trigger page loading events (default: `false`)
+- `:value` - Map of values to send (overrides `phx-value-*` attributes)
+
+<Note>
+Values from `phx-value-*` attributes are merged with the `:value` option, with the option taking precedence.
+</Note>
+
+## Navigation
+
+<Tabs>
+  <Tab title="navigate">
+    Navigate with pushState history:
+    
+    ```elixir
+    JS.navigate("/my-path")
+    JS.navigate("/my-path", replace: true)
+    ```
+  </Tab>
+  
+  <Tab title="patch">
+    Patch with pushState history:
+    
+    ```elixir
+    JS.patch("/my-path")
+    JS.patch("/my-path", replace: true)
+    ```
+  </Tab>
+</Tabs>
+
+## Dispatching Events
+
+Dispatch custom DOM events:
+
+```heex
+<button phx-click={JS.dispatch("click", to: ".nav")}>Click Nav</button>
+```
+
+### Options
+
+- `:to` - DOM selector (default: interacted element)
+- `:detail` - Map of data available in `event.detail`
+- `:bubbles` - Whether event bubbles (default: `true`)
+- `:blocking` - Block UI until `event.detail.done()` is called
+
+### Custom Event Example
+
+<CodeGroup>
+
+```javascript Client Listener
+window.addEventListener("app:clipcopy", (event) => {
+  if ("clipboard" in navigator) {
+    if (event.target.tagName === "INPUT") {
+      navigator.clipboard.writeText(event.target.value)
+    } else {
+      navigator.clipboard.writeText(event.target.textContent)
+    }
+  }
+})
+```
+
+```heex Trigger
+<button phx-click={JS.dispatch("app:clipcopy", to: "#output")}>
+  Copy
+</button>
+```
+
+</CodeGroup>
+
+<Warning>
+`click` events dispatched with `JS.dispatch` are `MouseEvent` types and cannot have custom details.
+</Warning>
+
+## Executing Stored Commands
+
+Execute JS commands from element attributes:
+
+```heex
+<div id="modal" phx-remove={JS.hide("#modal")}>...</div>
+<button phx-click={JS.exec("phx-remove", to: "#modal")}>Close</button>
+```
+
+## Composing Commands
+
+Commands can be chained together:
+
+```heex
+<button phx-click={
+  JS.push("modal-closed") 
+  |> JS.remove_class("show", to: "#modal", transition: "fade-out")
+}>
+  Hide Modal
+</button>
+```
+
+### Extracting to Functions
+
+```elixir
+alias Phoenix.LiveView.JS
+
+def hide_modal(js \\ %JS{}, selector) do
+  js
+  |> JS.push("modal-closed")
+  |> JS.remove_class("show", to: selector, transition: "fade-out")
+end
+```
+
+```heex
+<button phx-click={hide_modal("#modal")}>Hide Modal</button>
+```
+
+<Note>
+Commands execute in order on the client. Fully client-side commands (like `hide`) execute immediately without waiting for server responses.
+</Note>
+
+## DOM Selectors
+
+All commands accept a `:to` option with these selector types:
+
+<Tabs>
+  <Tab title="String">
+    Standard CSS selector:
+    
+    ```elixir
+    JS.show(to: "#modal")
+    JS.hide(to: ".notification")
+    JS.add_class("active", to: "body a:nth-child(2)")
+    ```
+  </Tab>
+  
+  <Tab title="Scoped: inner">
+    Target elements within the interacted element:
+    
+    ```heex
+    <div phx-click={JS.show(to: {:inner, ".menu"})}>
+      <div>Open me</div>
+      <div class="menu hidden" phx-click-away={JS.hide()}>
+        Dropdown content
+      </div>
+    </div>
+    ```
+  </Tab>
+  
+  <Tab title="Scoped: closest">
+    Target closest ancestor element:
+    
+    ```elixir
+    JS.hide(to: {:closest, ".card"})
+    ```
+  </Tab>
+</Tabs>
+
+## Modal Component Example
+
+Complete modal with show/hide functionality:
+
+```elixir
+alias Phoenix.LiveView.JS
+
+def hide_modal(js \\ %JS{}) do
+  js
+  |> JS.hide(transition: "fade-out", to: "#modal")
+  |> JS.hide(transition: "fade-out-scale", to: "#modal-content")
+end
+
+def modal(assigns) do
+  ~H"""
+  <div id="modal" class="phx-modal" phx-remove={hide_modal()}>
+    <div
+      id="modal-content"
+      class="phx-modal-content"
+      phx-click-away={hide_modal()}
+      phx-window-keydown={hide_modal()}
+      phx-key="escape"
+    >
+      <button class="phx-modal-close" phx-click={hide_modal()}>✖</button>
+      <p>{@text}</p>
+    </div>
+  </div>
+  """
+end
+```
+
+## Client-Side JS Execution
+
+Execute JS commands from JavaScript:
+
+<CodeGroup>
+
+```javascript Via Hook
+// In a client hook
+this.js().show(this.el, {transition: "fade-in"})
+```
+
+```javascript Via LiveSocket
+const el = document.querySelector("#my-element")
+liveSocket.js().hide(el, {transition: "fade-out"})
+```
+
+</CodeGroup>
+
+## Encoding Commands
+
+For custom JSON libraries or dynamic execution:
+
+```elixir
+socket
+|> push_event("myapp:exec_js", %{
+  to: "#items-#{item.id}",
+  js: JS.show() |> JS.to_encodable()
+})
+```
+
+```javascript
+window.addEventListener("phx:myapp:exec_js", e => {
+  const {to, js} = e.detail
+  const el = document.querySelector(to)
+  if (el && js) {
+    window.liveSocket.execJS(el, js)
+  }
+})
+```
+
+<Tip>
+When using Jason or JSON libraries, commands are automatically encoded—no need to call `to_encodable/1`.
+</Tip>
+
+## See Also
+
+- [Bindings](/client/bindings) - DOM event bindings
+- [JS Interop](/client/js-interop) - JavaScript integration
+- [Syncing Changes](/client/syncing-changes) - Optimistic UI patterns
+- `Phoenix.LiveView.JS` - Complete API documentation

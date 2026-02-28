@@ -1,0 +1,416 @@
+---
+title: "Deployments and Recovery"
+description: "Best practices for deploying LiveView applications and handling reconnections"
+---
+
+One of the questions that arise from LiveView's stateful model is what considerations are necessary when deploying a new version or when recovering from an error.
+
+## Automatic Reconnection
+
+Whenever LiveView disconnects, it automatically attempts to reconnect to the server using exponential back-off:
+
+<Steps>
+  <Step title="Immediate retry">
+    First reconnection attempt happens immediately.
+  </Step>
+  <Step title="Exponential back-off">
+    Subsequent retries wait progressively longer (2s, 5s, etc.).
+  </Step>
+  <Step title="Load balancer redirect">
+    During deployments, the next reconnection will be redirected to new servers.
+  </Step>
+</Steps>
+
+<Info>
+This means that in most deployment scenarios, your users will experience a brief disconnection followed by automatic reconnection to the new version.
+</Info>
+
+## State Management During Deployments
+
+Your LiveView may have state that will be lost during disconnections and deployments. The good news is that there are several practices you can follow that will not only help with deployments but improve your application overall.
+
+### 1. Keep State in Query Parameters
+
+For UI state like tabs, filters, or sorting, use URL parameters instead of server-side state.
+
+**Bad Approach:**
+```elixir
+# Using handle_event to manage tabs
+def handle_event("switch_tab", %{"tab" => tab}, socket) do
+  {:noreply, assign(socket, current_tab: tab)}
+end
+```
+
+**Good Approach:**
+```elixir
+# Using patch navigation with URL parameters
+<.link patch={~p"/dashboard?tab=settings"}>Settings</.link>
+
+def handle_params(params, _uri, socket) do
+  tab = params["tab"] || "overview"
+  {:noreply, assign(socket, current_tab: tab)}
+end
+```
+
+**Benefits:**
+- State persists across disconnections
+- URLs are shareable
+- Better SEO and indexing
+- Browser back/forward buttons work correctly
+
+### 2. Store Relevant State in the Database
+
+For important state that should persist across sessions and devices, use the database.
+
+**Example: Chat Application**
+
+```elixir
+def mount(%{"room_id" => room_id}, %{"user_id" => user_id}, socket) do
+  # Retrieve last read message from database
+  last_read = Messages.get_last_read(user_id, room_id)
+  
+  {:ok,
+   socket
+   |> assign(:room_id, room_id)
+   |> assign(:last_read, last_read)
+   |> load_messages()}
+end
+
+def handle_event("mark_read", %{"message_id" => id}, socket) do
+  # Persist to database
+  Messages.mark_as_read(
+    socket.assigns.current_user.id,
+    socket.assigns.room_id,
+    id
+  )
+  
+  {:noreply, assign(socket, last_read: id)}
+end
+```
+
+**Benefits:**
+- State synchronized across devices
+- Survives disconnections and deployments
+- Enables offline-first features
+- Provides audit trail
+
+### 3. Leverage Automatic Form Recovery
+
+Phoenix performs automatic form recovery: in case of disconnections, Phoenix collects form data and resubmits it on reconnection.
+
+<Note>
+This mechanism works out of the box for most forms, but you may want to customize or test it for complex forms.
+</Note>
+
+**Example: Long Form**
+
+```heex
+<.form for={@form} phx-change="validate" phx-submit="save">
+  <.input field={@form[:name]} label="Name" />
+  <.input field={@form[:email]} label="Email" />
+  <.input field={@form[:bio]} type="textarea" label="Bio" />
+  <.button>Save</.button>
+</.form>
+```
+
+If the connection drops while filling out the form:
+1. Form data is preserved in the browser
+2. On reconnection, LiveView resubmits via `phx-change`
+3. Your `validate` event handler is called
+4. Form state is restored
+
+See the [Form Bindings documentation](../client/form-bindings) for customization options.
+
+## Deployment Strategies
+
+### Rolling Deployments
+
+The standard approach for zero-downtime deployments:
+
+<Steps>
+  <Step title="Deploy new instances">
+    Start new application instances with the updated code.
+  </Step>
+  <Step title="Health checks pass">
+    Wait for health checks to confirm new instances are ready.
+  </Step>
+  <Step title="Route traffic">
+    Load balancer starts routing new connections to new instances.
+  </Step>
+  <Step title="Graceful shutdown">
+    Old instances continue handling existing connections.
+  </Step>
+  <Step title="Connection migration">
+    As connections disconnect, they reconnect to new instances.
+  </Step>
+</Steps>
+
+```elixir
+# config/runtime.exs
+config :my_app, MyAppWeb.Endpoint,
+  # Allow time for connections to drain
+  drain_time: 30_000,
+  # Graceful shutdown timeout
+  shutdown_timeout: 60_000
+```
+
+### Blue-Green Deployments
+
+For critical applications requiring instant rollback:
+
+1. **Blue environment**: Current production
+2. **Green environment**: New version
+3. **Switch**: Update load balancer to point to green
+4. **Verify**: Monitor for issues
+5. **Rollback**: Switch back to blue if needed
+
+<Warning>
+Ensure your database schema is compatible with both versions during the switch.
+</Warning>
+
+### Canary Deployments
+
+Gradually roll out to a subset of users:
+
+```elixir
+# Route 10% of traffic to new version
+defmodule MyAppWeb.Router do
+  pipeline :browser do
+    plug :accepts, ["html"]
+    plug :canary_routing
+  end
+  
+  defp canary_routing(conn, _opts) do
+    if :rand.uniform(100) <= 10 do
+      # Route to canary version
+      assign(conn, :version, :canary)
+    else
+      assign(conn, :version, :stable)
+    end
+  end
+end
+```
+
+## Handling Complex State
+
+If you have complex state that cannot be immediately handled by the practices above, consider these strategies:
+
+### Persist to Redis/Database
+
+For complex, temporary state:
+
+```elixir
+def mount(_params, session, socket) do
+  session_id = session["session_id"]
+  
+  # Try to restore state from Redis
+  state = case Redis.get("lv_state:#{session_id}") do
+    {:ok, nil} -> initial_state()
+    {:ok, data} -> Jason.decode!(data)
+  end
+  
+  {:ok, assign(socket, state)}
+end
+
+def terminate(_reason, socket) do
+  # Persist state on disconnect
+  session_id = socket.assigns.session_id
+  Redis.setex(
+    "lv_state:#{session_id}",
+    3600,  # 1 hour TTL
+    Jason.encode!(extract_state(socket))
+  )
+end
+```
+
+### Graceful Session Migration
+
+For long-running sessions like games:
+
+```elixir
+# In your endpoint
+config :my_app, MyAppWeb.Endpoint,
+  # Don't immediately close old connections
+  drain_time: :infinity
+
+# In your game LiveView
+def mount(%{"game_id" => game_id}, _session, socket) do
+  game = Games.get_or_create(game_id)
+  
+  # Subscribe to game state
+  Phoenix.PubSub.subscribe(MyApp.PubSub, "game:#{game_id}")
+  
+  {:ok, assign(socket, game: game)}
+end
+
+# Deploy script
+# 1. Start new servers
+# 2. Wait for current games to finish
+# 3. Shutdown old servers
+```
+
+### State Versioning
+
+Handle incompatible state changes:
+
+```elixir
+def mount(params, session, socket) do
+  state = case session["state_version"] do
+    "2.0" -> load_state_v2(session)
+    "1.0" -> migrate_state_v1_to_v2(session)
+    _ -> initial_state()
+  end
+  
+  {:ok, assign(socket, state)}
+end
+```
+
+## Health Checks and Monitoring
+
+Implement health checks for your deployment pipeline:
+
+```elixir
+# lib/my_app_web/controllers/health_controller.ex
+defmodule MyAppWeb.HealthController do
+  use MyAppWeb, :controller
+
+  def index(conn, _params) do
+    checks = [
+      database: check_database(),
+      redis: check_redis(),
+      pubsub: check_pubsub()
+    ]
+    
+    if Enum.all?(checks, fn {_key, status} -> status == :ok end) do
+      json(conn, %{status: "healthy", checks: checks})
+    else
+      conn
+      |> put_status(:service_unavailable)
+      |> json(%{status: "unhealthy", checks: checks})
+    end
+  end
+  
+  defp check_database do
+    case Ecto.Adapters.SQL.query(MyApp.Repo, "SELECT 1") do
+      {:ok, _} -> :ok
+      _ -> :error
+    end
+  end
+end
+```
+
+## Connection Draining
+
+Gracefully handle existing connections:
+
+```elixir
+# lib/my_app/application.ex
+def start(_type, _args) do
+  children = [
+    MyApp.Repo,
+    MyAppWeb.Telemetry,
+    {Phoenix.PubSub, name: MyApp.PubSub},
+    MyAppWeb.Endpoint
+  ]
+  
+  # Handle SIGTERM gracefully
+  :os.set_signal(:sigterm, :handle)
+  
+  opts = [strategy: :one_for_one, name: MyApp.Supervisor]
+  Supervisor.start_link(children, opts)
+end
+```
+
+## Testing Deployments
+
+Test your deployment strategy:
+
+```elixir
+defmodule MyAppWeb.DeploymentTest do
+  use MyAppWeb.ConnCase
+  import Phoenix.LiveViewTest
+
+  test "state persists across reconnection", %{conn: conn} do
+    {:ok, view, _html} = live(conn, "/dashboard?tab=settings")
+    
+    # Simulate disconnection
+    send(view.pid, :disconnect)
+    
+    # Reconnect
+    {:ok, view, _html} = live(conn, "/dashboard?tab=settings")
+    
+    # Verify state is restored
+    assert has_element?(view, "#settings-tab.active")
+  end
+  
+  test "form data recovers after disconnection", %{conn: conn} do
+    {:ok, view, _html} = live(conn, "/users/new")
+    
+    # Fill form
+    view
+    |> form("#user-form", user: %{name: "John", email: "john@example.com"})
+    |> render_change()
+    
+    # Simulate disconnection and reconnection
+    send(view.pid, :disconnect)
+    {:ok, view, _html} = live(conn, "/users/new")
+    
+    # Form data should be preserved
+    assert view |> element("input[name='user[name]']") |> render() =~ "John"
+  end
+end
+```
+
+## Best Practices Summary
+
+<Steps>
+  <Step title="Keep state in URLs">
+    Use query parameters for UI state like tabs, filters, and sorting.
+  </Step>
+  <Step title="Use the database">
+    Persist important state that should survive across sessions.
+  </Step>
+  <Step title="Trust form recovery">
+    Phoenix automatically recovers form data on reconnection.
+  </Step>
+  <Step title="Implement health checks">
+    Ensure new instances are ready before routing traffic.
+  </Step>
+  <Step title="Test reconnection">
+    Verify your application handles disconnections gracefully.
+  </Step>
+  <Step title="Monitor deployments">
+    Track error rates and performance during rollouts.
+  </Step>
+</Steps>
+
+## Common Pitfalls
+
+<Warning>
+**Storing too much state in memory**
+
+Don't rely solely on socket assigns for critical state. Use URLs and database persistence.
+</Warning>
+
+<Warning>
+**Not testing disconnections**
+
+Always test how your application behaves when connections drop and reconnect.
+</Warning>
+
+<Warning>
+**Ignoring database migrations**
+
+Ensure your database schema is compatible during rolling deployments where both old and new code run simultaneously.
+</Warning>
+
+## Summary
+
+Following the practices above will:
+- Make deployments smooth and transparent to users
+- Improve your application's overall robustness
+- Provide better user experience with shareable URLs
+- Enable cross-device synchronization
+- Reduce the amount of state you need to manage in memory
+
+Most importantly, these practices make your application better regardless of deployment concerns, bringing benefits like indexing, link sharing, and device synchronization.

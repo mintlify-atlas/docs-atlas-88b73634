@@ -1,0 +1,432 @@
+---
+title: "Syncing State Changes"
+description: "Understand how LiveView synchronizes client and server state for optimal user experience"
+---
+
+LiveView automatically synchronizes state between the client and server, ensuring a smooth user experience even with network latency.
+
+## The Challenge
+
+In any web application, client and server state can diverge temporarily due to network latency. Consider this scenario:
+
+### Example: Form Submission Race Condition
+
+**Step 1:** User types `"hello@example."` and debounce triggers:
+
+```
+[ hello@example.    ]
+    ------------
+       SUBMIT
+    ------------
+```
+
+**Step 2:** User finishes typing and clicks submit:
+
+```
+[ hello@example.com ]
+    ------------
+     SUBMITTING
+    ------------
+```
+
+**Step 3:** Server response from debounce arrives:
+
+Without proper handling, the client would roll back to:
+
+```
+[ hello@example.    ] ✓
+    ------------
+       SUBMIT
+    ------------
+```
+
+<Warning>
+This rollback would be disastrous—the user's completed input and button state would be lost!
+</Warning>
+
+## LiveView's Solution
+
+LiveView automatically handles this synchronization:
+
+1. **Client is source of truth** for current input values
+2. **Tracks in-flight events** and only applies changes once all events resolve
+3. **Preserves focus state** across server updates
+
+<Tip>
+For most cases, LiveView handles client-server synchronization automatically without any code changes needed.
+</Tip>
+
+See [Form Bindings - JavaScript Client Specifics](/client/form-bindings#client-behavior) for complete details.
+
+## Optimistic UI with Loading Classes
+
+LiveView automatically adds CSS loading classes to elements pushing events to the server.
+
+### Automatic Loading Classes
+
+```heex
+<button phx-click="clicked" phx-window-keydown="key">Click me</button>
+```
+
+- On click: receives `phx-click-loading` class
+- On keydown: receives `phx-keydown-loading` class
+- Classes removed when server acknowledges the event
+
+### Available Loading Classes
+
+| Event | Loading Class |
+|-------|---------------|
+| `phx-click` | `phx-click-loading` |
+| `phx-change` | `phx-change-loading` |
+| `phx-submit` | `phx-submit-loading` |
+| `phx-focus` | `phx-focus-loading` |
+| `phx-blur` | `phx-blur-loading` |
+| `phx-window-keydown` | `phx-keydown-loading` |
+| `phx-window-keyup` | `phx-keyup-loading` |
+
+### CSS Loading States
+
+Create immediate visual feedback with CSS:
+
+```css
+.phx-click-loading.opaque-on-click {
+  opacity: 50%;
+}
+```
+
+```heex
+<button phx-click="save" class="opaque-on-click">Save</button>
+```
+
+### Form-Specific Behavior
+
+For events inside forms, loading classes apply to both the element and the form:
+
+```heex
+<form id="user-form" phx-change="validate" phx-submit="save">
+  <input name="email" />
+  <button type="submit">Save</button>
+</form>
+```
+
+- Input change: `phx-change-loading` on both input and form
+- Form submit: `phx-submit-loading` on both button and form
+
+### Disabled State
+
+Customize button text during loading:
+
+```heex
+<button phx-disable-with="Submitting..." type="submit">Submit</button>
+```
+
+<Note>
+Buttons are automatically disabled during server acknowledgement. Use `phx-disable-with` to customize the text.
+</Note>
+
+## Tailwind Integration
+
+Add custom variants for cleaner loading states:
+
+```javascript
+// tailwind.config.js
+plugins: [
+  plugin(({ addVariant }) => {
+    addVariant("phx-click-loading", [
+      ".phx-click-loading&", 
+      ".phx-click-loading &"
+    ])
+    addVariant("phx-submit-loading", [
+      ".phx-submit-loading&", 
+      ".phx-submit-loading &"
+    ])
+    addVariant("phx-change-loading", [
+      ".phx-change-loading&", 
+      ".phx-change-loading &"
+    ])
+  })
+]
+```
+
+Use in templates:
+
+```heex
+<button phx-click="clicked" class="phx-click-loading:opacity-50">
+  Click me
+</button>
+
+<div class="phx-submit-loading:animate-pulse">
+  <button type="submit">Save</button>
+</div>
+```
+
+## Optimistic UI with JS Commands
+
+For more control, use JS commands to specify which elements get loading states:
+
+```heex
+<button phx-click={JS.push("delete", loading: "#post-row-13")}>
+  Delete
+</button>
+```
+
+### Common Patterns
+
+<Tabs>
+  <Tab title="Immediate Hide">
+    Hide element immediately on click:
+    
+    ```heex
+    <button phx-click={JS.push("delete") |> JS.hide(to: "#post-row-13")}>
+      Delete
+    </button>
+    ```
+  </Tab>
+  
+  <Tab title="Fade Out">
+    Fade out with transition:
+    
+    ```heex
+    <button phx-click={
+      JS.push("delete") 
+      |> JS.hide(to: "#post-row-13", transition: "fade-out")
+    }>
+      Delete
+    </button>
+    ```
+  </Tab>
+  
+  <Tab title="Add Class">
+    Add loading class to parent:
+    
+    ```heex
+    <button phx-click={
+      JS.push("delete") 
+      |> JS.add_class("opacity-50", to: "#post-row-13")
+    }>
+      Delete
+    </button>
+    ```
+  </Tab>
+  
+  <Tab title="Multiple Effects">
+    Combine multiple commands:
+    
+    ```heex
+    <button phx-click={
+      JS.push("delete")
+      |> JS.add_class("loading", to: "#post-row-13")
+      |> JS.transition("shake", to: "#post-row-13")
+    }>
+      Delete
+    </button>
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+JS commands are DOM-patch aware—operations persist across server updates.
+</Note>
+
+## Custom Client Events
+
+Dispatch custom DOM events for specialized interactions:
+
+<CodeGroup>
+
+```javascript Event Listener
+window.addEventListener("app:clipcopy", (event) => {
+  if ("clipboard" in navigator) {
+    if (event.target.tagName === "INPUT") {
+      navigator.clipboard.writeText(event.target.value)
+    } else {
+      navigator.clipboard.writeText(event.target.textContent)
+    }
+  } else {
+    alert(
+      "Sorry, your browser does not support clipboard copy."
+    )
+  }
+})
+```
+
+```heex Trigger Event
+<button phx-click={JS.dispatch("app:clipcopy", to: "#printed-output")}>
+  Copy
+</button>
+```
+
+</CodeGroup>
+
+## Advanced: JS Hooks
+
+For complex cases, use hooks to control exactly when server updates apply:
+
+```javascript
+Hooks.CustomInput = {
+  mounted() {
+    // Take control of element updates
+  },
+  
+  beforeUpdate() {
+    // Prepare for server update
+  },
+  
+  updated() {
+    // Selectively apply server changes
+  }
+}
+```
+
+See [Client Hooks](/client/hooks) for detailed documentation.
+
+## Live Navigation
+
+LiveView provides classes and events for navigation state:
+
+### Connection Classes
+
+Applied to the LiveView's parent container:
+
+| Class | Description |
+|-------|-------------|
+| `phx-connected` | View connected to server |
+| `phx-loading` | View not connected to server |
+| `phx-error` | Error occurred (applied with `phx-loading`) |
+
+### Page Loading Events
+
+Triggered for navigation via `<.link>`, `push_navigate`, `push_patch`, and `phx-submit`:
+
+<CodeGroup>
+
+```javascript Setup
+import topbar from "topbar"
+
+window.addEventListener("phx:page-loading-start", info => {
+  topbar.show(500)
+  console.log("Navigation kind:", info.detail.kind)
+})
+
+window.addEventListener("phx:page-loading-stop", info => {
+  topbar.hide()
+})
+```
+
+```javascript Event Details
+// info.detail contains:
+{
+  kind: "redirect" | "patch" | "initial" | "element" | "error",
+  to: "/path",           // All kinds except "element"
+  target: DOMElement     // Only for "element" kind
+}
+```
+
+</CodeGroup>
+
+### Navigation Event
+
+Triggered whenever the URL changes:
+
+```javascript
+window.addEventListener("phx:navigate", (e) => {
+  console.log("Navigated to:", e.detail.href)
+  console.log("Is patch:", e.detail.patch)
+  console.log("Is back/forward:", e.detail.pop)
+})
+```
+
+<Tip>
+For navigation-aware logic, prefer `phx:navigate` over hook `updated()` callbacks, as hooks may fire before `window.location` is updated.
+</Tip>
+
+## Complete Example: Optimistic Delete
+
+<CodeGroup>
+
+```heex Template
+<div id={"post-#{@post.id}"} class="post-row">
+  <h3>{@post.title}</h3>
+  <button phx-click={
+    JS.push("delete", value: %{id: @post.id})
+    |> JS.hide(to: "#post-#{@post.id}", transition: "fade-out-scale")
+  } class="btn-delete">
+    Delete
+  </button>
+</div>
+```
+
+```elixir Server
+def handle_event("delete", %{"id" => id}, socket) do
+  {:ok, _post} = Blog.delete_post(id)
+  {:noreply, socket}
+end
+```
+
+```css Styles
+.fade-out-scale {
+  transition: all 0.3s ease-out;
+}
+
+.phx-remove .fade-out-scale {
+  opacity: 0;
+  transform: scale(0.9);
+}
+```
+
+</CodeGroup>
+
+## Best Practices
+
+<Tabs>
+  <Tab title="Use Loading Classes">
+    Start with CSS loading classes for simple feedback:
+    
+    ```css
+    .btn.phx-click-loading {
+      opacity: 0.6;
+      cursor: wait;
+    }
+    ```
+  </Tab>
+  
+  <Tab title="JS Commands for Complex UI">
+    Use JS commands when loading state affects multiple elements:
+    
+    ```heex
+    <button phx-click={JS.push("save", loading: ".form-container")}>
+      Save
+    </button>
+    ```
+  </Tab>
+  
+  <Tab title="Hooks for Full Control">
+    Reserve hooks for cases needing complete DOM control:
+    
+    ```javascript
+    Hooks.ComplexWidget = {
+      beforeUpdate() {
+        // Save widget state
+      },
+      updated() {
+        // Restore widget state selectively
+      }
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Test with Latency">
+    Always test with simulated latency:
+    
+    ```javascript
+    liveSocket.enableLatencySim(1000)
+    ```
+  </Tab>
+</Tabs>
+
+## See Also
+
+- [JS Commands](/client/js-commands) - Client-side operations
+- [Form Bindings](/client/form-bindings) - Form handling details
+- [Hooks](/client/hooks) - Client-side lifecycle hooks
+- [Bindings](/client/bindings) - All available bindings

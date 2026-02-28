@@ -1,0 +1,114 @@
+---
+title: Introduction to Phoenix LiveView
+description: Build rich, real-time user experiences with server-rendered HTML. No JavaScript framework required.
+---
+
+Phoenix LiveView enables rich, real-time user experiences with server-rendered HTML. You no longer have to split work between client and server, across different toolings, layers, and abstractions. Instead, LiveView enriches the server with a declarative and powerful model while keeping your code closer to your data.
+
+## What is LiveView?
+
+LiveViews are processes that receive events, update their state, and render updates to a page as diffs.
+
+The LiveView programming model is declarative: instead of saying "once event X happens, change Y on the page", events in LiveView are regular messages which may cause changes to the state. Once the state changes, the LiveView will re-render the relevant parts of its HTML template and push it to the browser, which updates the page in the most efficient manner.
+
+Every LiveView is first rendered statically as part of a regular HTTP request, which provides quick times for "First Meaningful Paint", in addition to helping search and indexing engines. A persistent connection is then established between the client and server. This allows LiveView applications to react faster to user events as there is less work to be done and less data to be sent compared to stateless requests.
+
+## Quick example
+
+Here's a simple LiveView that displays a temperature and allows users to increment it:
+
+```elixir
+defmodule MyAppWeb.ThermostatLive do
+  use MyAppWeb, :live_view
+
+  def render(assigns) do
+    ~H"""
+    Current temperature: {@temperature}°F
+    <button phx-click="inc_temperature">+</button>
+    """
+  end
+
+  def mount(_params, _session, socket) do
+    temperature = 70 # Let's assume a fixed temperature for now
+    {:ok, assign(socket, :temperature, temperature)}
+  end
+
+  def handle_event("inc_temperature", _params, socket) do
+    {:noreply, update(socket, :temperature, &(&1 + 1))}
+  end
+end
+```
+
+This simple example demonstrates the three core callbacks of a LiveView:
+
+- `render/1` - Returns the HTML to display
+- `mount/3` - Initializes the LiveView state
+- `handle_event/3` - Handles user interactions
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Declarative rendering" icon="code">
+    Render HTML on the server over WebSockets with a declarative model. No need to manage client state or write API endpoints.
+  </Card>
+  
+  <Card title="Minimal data over the wire" icon="bolt">
+    LiveView sends only diffs after the initial render, reducing latency and bandwidth. The client updates 5-10x faster compared to solutions that replace whole HTML fragments.
+  </Card>
+  
+  <Card title="Real-time forms" icon="file-lines">
+    Built-in support for live form validation, file uploads with progress indicators, nested inputs, and automatic recovery following crashes or disconnects.
+  </Card>
+  
+  <Card title="Rich interactivity" icon="hand-pointer">
+    Use `phx-click`, `phx-focus`, `phx-blur`, and `phx-submit` bindings. Perform optimistic updates and transitions with `Phoenix.LiveView.JS`.
+  </Card>
+</CardGroup>
+
+## Get started
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Build your first interactive LiveView in minutes
+  </Card>
+  
+  <Card title="Installation" icon="download" href="/installation">
+    Add LiveView to an existing Phoenix application
+  </Card>
+  
+  <Card title="Assigns and templates" icon="brackets-curly" href="/assigns-eex">
+    Learn about the HEEx templating language
+  </Card>
+  
+  <Card title="Bindings" icon="link" href="/bindings">
+    Explore client-server interaction patterns
+  </Card>
+</CardGroup>
+
+## Why LiveView?
+
+LiveView is server-centric. You no longer have to worry about managing both client and server to keep things in sync. LiveView automatically updates the client as changes happen on the server.
+
+### Built on a solid foundation
+
+LiveView is built on top of the Elixir programming language and functional programming, which provides a great model for reasoning about your code and how your LiveView changes over time.
+
+### Scales naturally
+
+By building on top of a scalable platform, LiveView scales well vertically (from small to large instances) and horizontally (by adding more instances). This allows you to continue shipping features when more and more users join your application.
+
+### Distributed and real-time
+
+A LiveView app can push events to users as those events happen anywhere in the system. Want to notify a user that their friend just connected? This is easily done without custom JavaScript and with no extra external dependencies (no Redis, no message queues).
+
+### Change tracking
+
+Whenever you change a value on the server, LiveView will send to the client only the values that changed, drastically reducing the latency and the amount of data sent over the wire. This is achievable thanks to Elixir's immutability and its ability to treat code as data.
+
+## Next steps
+
+<Note>
+  New Phoenix applications (v1.6+) include LiveView by default. If you're starting fresh, check out the [Phoenix installation guide](https://hexdocs.pm/phoenix/installation.html).
+</Note>
+
+Ready to build your first LiveView? Continue to the [Quickstart guide](/quickstart) to create a simple interactive application.

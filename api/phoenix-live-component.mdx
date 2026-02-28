@@ -1,0 +1,384 @@
+---
+title: Phoenix.LiveComponent
+description: Compartmentalize state, markup, and events in stateful components
+---
+
+## Overview
+
+LiveComponents are a mechanism to compartmentalize state, markup, and events for sharing across LiveViews. They run inside the LiveView process but have their own state and life-cycle.
+
+This is a contrast to `Phoenix.Component` (function components), which are stateless and do not have a life-cycle.
+
+## When to Use LiveComponents
+
+Generally, prefer function components over live components as they are simpler. Use LiveComponents only when you need to encapsulate both event handling and additional state.
+
+Avoid using LiveComponents merely for code organization purposes.
+
+## Life-cycle
+
+LiveComponents have a similar life-cycle to LiveViews:
+
+- **LiveViews**: `mount/3` → `handle_params/3` → `render/1`
+- **LiveComponents**: `mount/1` → `update/2` → `render/1`
+
+On first render:
+
+```
+mount(socket) -> update(assigns, socket) -> render(assigns)
+```
+
+On subsequent updates:
+
+```
+update(assigns, socket) -> render(assigns)
+```
+
+## Callbacks
+
+### mount/1
+
+```elixir
+@callback mount(socket :: Socket.t()) :: {:ok, Socket.t()} | {:ok, Socket.t(), keyword()}
+```
+
+Called once when the component is first added to the page.
+
+<ParamField path="socket" type="Socket.t()">
+  The component socket (separate from parent LiveView socket).
+</ParamField>
+
+<ResponseField name="return" type="{:ok, socket} | {:ok, socket, options}">
+  Returns updated socket with optional configuration.
+</ResponseField>
+
+**Example:**
+
+```elixir
+def mount(socket) do
+  {:ok, assign(socket, :count, 0)}
+end
+```
+
+### update/2
+
+```elixir
+@callback update(assigns :: Socket.assigns(), socket :: Socket.t()) :: {:ok, Socket.t()}
+```
+
+Invoked with assigns passed to `live_component/1`.
+
+<ParamField path="assigns" type="map">
+  New assigns passed to the component (does not include previous assigns).
+</ParamField>
+
+<ParamField path="socket" type="Socket.t()">
+  The component socket with previous assigns in `socket.assigns`.
+</ParamField>
+
+<ResponseField name="return" type="{:ok, socket}">
+  Returns updated socket.
+</ResponseField>
+
+**Example:**
+
+```elixir
+def update(assigns, socket) do
+  {:ok, assign(socket, :user, assigns.user)}
+end
+```
+
+### update_many/1
+
+```elixir
+@callback update_many([{Socket.assigns(), Socket.t()}]) :: [Socket.t()]
+```
+
+Alternative to `update/2` called with all LiveComponents of the same module being rendered.
+
+<ParamField path="assigns_sockets" type="list">
+  List of tuples containing assigns and socket for each component instance.
+</ParamField>
+
+<ResponseField name="return" type="list">
+  List of updated sockets in the same order.
+</ResponseField>
+
+**Example:**
+
+```elixir
+def update_many(assigns_sockets) do
+  list_of_ids = Enum.map(assigns_sockets, fn {assigns, _socket} -> assigns.id end)
+
+  users =
+    from(u in User, where: u.id in ^list_of_ids, select: {u.id, u})
+    |> Repo.all()
+    |> Map.new()
+
+  Enum.map(assigns_sockets, fn {assigns, socket} ->
+    assign(socket, :user, users[assigns.id])
+  end)
+end
+```
+
+### render/1
+
+```elixir
+@callback render(assigns :: Socket.assigns()) :: Phoenix.LiveView.Rendered.t()
+```
+
+Renders the component template.
+
+<ParamField path="assigns" type="map">
+  The component assigns including `:id` and `:myself`.
+</ParamField>
+
+<ResponseField name="return" type="Phoenix.LiveView.Rendered.t()">
+  Must return a template defined via the `~H` sigil.
+</ResponseField>
+
+**Example:**
+
+```elixir
+def render(assigns) do
+  ~H"""
+  <div id={"user-#{@id}"} class="user">
+    {@user.name}
+  </div>
+  """
+end
+```
+
+### handle_event/3
+
+```elixir
+@callback handle_event(
+  event :: binary,
+  unsigned_params :: Phoenix.LiveView.unsigned_params(),
+  socket :: Socket.t()
+) :: {:noreply, Socket.t()} | {:reply, map, Socket.t()}
+```
+
+Invoked to handle events sent to the component.
+
+<ParamField path="event" type="string">
+  The event name.
+</ParamField>
+
+<ParamField path="params" type="map">
+  The event payload.
+</ParamField>
+
+<ParamField path="socket" type="Socket.t()">
+  The component socket.
+</ParamField>
+
+<ResponseField name="return" type="{:noreply, socket} | {:reply, map, socket}">
+  Returns updated socket, optionally with a reply.
+</ResponseField>
+
+**Example:**
+
+```elixir
+def handle_event("increment", _params, socket) do
+  {:noreply, update(socket, :count, &(&1 + 1))}
+end
+```
+
+### handle_async/3
+
+```elixir
+@callback handle_async(
+  name :: term,
+  async_fun_result :: {:ok, term} | {:exit, term},
+  socket :: Socket.t()
+) :: {:noreply, Socket.t()}
+```
+
+Invoked when the result of a `start_async/3` operation is available.
+
+<ParamField path="name" type="term">
+  The name given to `start_async/3`.
+</ParamField>
+
+<ParamField path="result" type="{:ok, result} | {:exit, reason}">
+  The async function result.
+</ParamField>
+
+<ParamField path="socket" type="Socket.t()">
+  The component socket.
+</ParamField>
+
+## Usage
+
+### Rendering a LiveComponent
+
+Render a LiveComponent using the `live_component/1` function:
+
+```heex
+<.live_component module={UserComponent} id={@user.id} user={@user} />
+```
+
+<ParamField path="module" type="atom" required>
+  The LiveComponent module.
+</ParamField>
+
+<ParamField path="id" type="string" required>
+  A unique identifier for the component instance.
+</ParamField>
+
+All other attributes are passed as assigns to the component.
+
+### Targeting Events
+
+To send events to a LiveComponent, use `phx-target` with `@myself`:
+
+```heex
+<button phx-click="save" phx-target={@myself}>
+  Save
+</button>
+```
+
+You can also target by ID or CSS selector:
+
+```heex
+<button phx-click="save" phx-target="#user-13">
+  Save
+</button>
+```
+
+### Receiving Slots
+
+LiveComponents can receive slots just like function components:
+
+```heex
+<.live_component module={MyComponent} id={@data.id}>
+  <div>Inner content here</div>
+</.live_component>
+```
+
+If you define `update/2`, be sure to include the `:inner_block` assign in the returned socket.
+
+## Managing State
+
+There are two approaches to managing state with LiveComponents:
+
+### LiveView as Source of Truth
+
+The parent LiveView fetches all data and passes it to components:
+
+```heex
+<.live_component
+  :for={card <- @cards}
+  module={CardComponent}
+  card={card}
+  id={card.id}
+/>
+```
+
+The component sends messages back to the LiveView:
+
+```elixir
+def handle_event("update_title", %{"title" => title}, socket) do
+  send(self(), {:updated_card, %{socket.assigns.card | title: title}})
+  {:noreply, socket}
+end
+```
+
+### LiveComponent as Source of Truth
+
+The LiveView only passes IDs, and components load their own data:
+
+```heex
+<.live_component
+  :for={card_id <- @card_ids}
+  module={CardComponent}
+  id={card_id}
+/>
+```
+
+Use `update_many/1` to optimize database queries:
+
+```elixir
+def update_many(assigns_sockets) do
+  list_of_ids = Enum.map(assigns_sockets, fn {assigns, _} -> assigns.id end)
+  
+  cards =
+    from(c in Card, where: c.id in ^list_of_ids)
+    |> Repo.all()
+    |> Map.new(&{&1.id, &1})
+  
+  Enum.map(assigns_sockets, fn {assigns, socket} ->
+    assign(socket, :card, cards[assigns.id])
+  end)
+end
+```
+
+## Communicating Between Components
+
+Use callbacks to unify communication:
+
+```elixir
+def handle_event("update", params, socket) do
+  socket.assigns.on_update.(params)
+  {:noreply, socket}
+end
+```
+
+From a LiveView:
+
+```heex
+<.live_component
+  module={CardComponent}
+  id={@card.id}
+  on_update={fn card -> send(self(), {:updated, card}) end}
+/>
+```
+
+From another component:
+
+```heex
+<.live_component
+  module={CardComponent}
+  id={@card.id}
+  on_update={fn card -> send_update(@myself, card: card) end}
+/>
+```
+
+## Performance Considerations
+
+### Keep Assigns Minimal
+
+Only pass necessary assigns to components:
+
+```heex
+<!-- Good -->
+<.live_component module={MyComponent} user={@user} org={@org} />
+
+<!-- Avoid -->
+<.live_component module={MyComponent} {assigns} />
+```
+
+### Use Function Components for DOM
+
+Don't use LiveComponents for simple DOM elements:
+
+```elixir
+# Bad: Using LiveComponent for a button
+defmodule MyButton do
+  use Phoenix.LiveComponent
+  
+  def render(assigns) do
+    ~H"""<button phx-click="click">{@text}</button>"""
+  end
+end
+
+# Good: Using function component
+def my_button(assigns) do
+  ~H"""<button phx-click={@click}>{@text}</button>"""
+end
+```
+
+## Limitations
+
+LiveComponents require a single HTML tag at the root. It is not possible to have components that render only text or multiple root tags.

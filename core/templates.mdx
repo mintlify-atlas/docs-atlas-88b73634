@@ -1,0 +1,625 @@
+---
+title: HEEx Templates
+description: Writing HTML templates with the HEEx template language
+---
+
+HEEx (HTML + EEx) is Phoenix LiveView's template language that combines HTML with embedded Elixir. It provides HTML-aware interpolation, component support, compile-time validation, and smart change tracking.
+
+## The ~H Sigil
+
+HEEx templates are created using the `~H` sigil:
+
+```elixir
+def render(assigns) do
+  ~H"""
+  <div>
+    <h1>{@title}</h1>
+    <p>Welcome, {@name}!</p>
+  </div>
+  """
+end
+```
+
+<Info>
+The `~H` sigil requires an `assigns` variable to be in scope. This variable must be a map containing all the data your template needs.
+</Info>
+
+## External Template Files
+
+For larger templates, use `.html.heex` files instead of inline templates:
+
+```
+lib/my_app_web/live/
+  ├── user_live.ex
+  └── user_live.html.heex
+```
+
+If you don't define `render/1`, LiveView automatically looks for a `.html.heex` file with the same name.
+
+## Interpolation
+
+### Basic Interpolation
+
+Use `{...}` for HTML-aware interpolation:
+
+```heex
+<p>Hello, {@name}!</p>
+<h1>{@page_title}</h1>
+<span>{calculate_total(@items)}</span>
+```
+
+### In Attributes
+
+```heex
+<div class={@css_class}>
+<img src={@avatar_url} alt={@user.name}>
+<a href={~p"/users/#{@user.id}"}>
+```
+
+### String Interpolation in Attributes
+
+```heex
+<div class={"btn btn-#{@type}"}>
+<span id={"user-#{@user.id}-status"}>
+```
+
+### Special Attribute Values
+
+<Tabs>
+  <Tab title="true">
+    Renders the attribute without a value:
+    ```heex
+    <input required={true}>
+    <!-- Renders: <input required> -->
+    ```
+  </Tab>
+  <Tab title="false/nil">
+    Omits the attribute entirely:
+    ```heex
+    <input required={false}>
+    <!-- Renders: <input> -->
+    ```
+  </Tab>
+  <Tab title="Lists (class only)">
+    ```heex
+    <div class={["btn", @active && "active", @size]}>
+    <!-- Automatically filters nil/false -->
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+`class` and `style` attributes render as empty strings instead of being omitted when `false`/`nil`, which has the same effect but enables rendering optimizations.
+</Note>
+
+### Dynamic Attributes
+
+Pass multiple attributes as a map or keyword list:
+
+```heex
+<div {@dynamic_attrs}>
+  Content
+</div>
+```
+
+```elixir
+assign(socket, :dynamic_attrs, [
+  class: "card",
+  id: "main",
+  "data-user-id": @user.id
+])
+```
+
+<Warning>
+The expression inside `{@dynamic_attrs}` must be a keyword list or map with **atom keys**.
+</Warning>
+
+## Block Expressions
+
+For multi-line Elixir code, use `<%= ... %>`:
+
+```heex
+<%= if @show_greeting? do %>
+  <p>Hello, {@name}!</p>
+<% end %>
+
+<%= for item <- @items do %>
+  <div>{item.title}</div>
+<% end %>
+
+<%= case @status do %>
+  <% :active -> %>
+    <span class="badge-green">Active</span>
+  <% :inactive -> %>
+    <span class="badge-gray">Inactive</span>
+<% end %>
+```
+
+<Info>
+Use `<%= %>` when the block produces output, and `<% %>` for control flow keywords like `end`, `else`, etc.
+</Info>
+
+## Special Attributes
+
+### :if - Conditional Rendering
+
+Conditionally render elements:
+
+```heex
+<div :if={@user}>Welcome, {@user.name}!</div>
+
+<p :if={@show_message}>This is a message</p>
+
+<button :if={@can_edit?}>Edit</button>
+```
+
+Works on any HTML element, component, or slot:
+
+```heex
+<.button :if={@show_save}>Save</.button>
+
+<:action :if={@can_delete}>
+  <button>Delete</button>
+</:action>
+```
+
+### :for - List Iteration
+
+Iterate over collections:
+
+```heex
+<ul>
+  <li :for={item <- @items}>{item.name}</li>
+</ul>
+
+<.card :for={post <- @posts} title={post.title}>
+  {post.body}
+</.card>
+```
+
+#### With Pattern Matching
+
+```heex
+<div :for={{key, value} <- @map}>
+  {key}: {value}
+</div>
+
+<div :for={%{name: name, age: age} <- @users}>
+  {name} is {age} years old
+</div>
+```
+
+#### :key for Change Tracking
+
+By default, LiveView tracks items by index. Use `:key` for better change tracking:
+
+```heex
+<li :for={item <- @items} :key={item.id}>
+  {item.name}
+</li>
+```
+
+<Accordion title="Why use :key?">
+Without `:key`, inserting an item at the beginning causes all subsequent items to be re-rendered. With `:key`, only the new item is sent to the client.
+</Accordion>
+
+<Warning>
+`:key` has no effect when using streams (`Phoenix.LiveView.stream/4`).
+</Warning>
+
+#### Combining :if and :for
+
+```heex
+<div :for={user <- @users} :if={user.active?}>
+  {user.name}
+</div>
+
+<!-- Equivalent to: -->
+<%= for user <- @users, user.active? do %>
+  <div>{user.name}</div>
+<% end %>
+```
+
+<Note>
+HEEx's `:for` does **not** support multiple generators in one expression. For that, use EEx blocks:
+
+```heex
+<%= for x <- @list1, y <- @list2 do %>
+  <div>{x} - {y}</div>
+<% end %>
+```
+</Note>
+
+### :let - Slot Variables
+
+Capture values passed from components:
+
+```heex
+<.form :let={f} for={@form}>
+  <.input field={f[:name]} />
+</.form>
+
+<.list :let={item} entries={@items}>
+  <strong>{item.title}</strong>
+</.list>
+```
+
+See the [Components](/core/components) guide for more on slots and `:let`.
+
+## Function Components
+
+Invoke function components with HTML-like syntax:
+
+### Local Components
+
+```heex
+<.button type="submit">Save</.button>
+<.card title="Welcome" />
+<.icon name="check" />
+```
+
+### Remote Components
+
+```heex
+<MyApp.Components.button>Click me</MyApp.Components.button>
+<Phoenix.Component.link href="/">Home</Phoenix.Component.link>
+```
+
+### With Attributes
+
+```heex
+<.user_card 
+  name={@user.name}
+  email={@user.email}
+  avatar={@user.avatar}
+/>
+```
+
+### Self-Closing vs Block Form
+
+```heex
+<!-- Self-closing (no inner content) -->
+<.icon name="star" />
+
+<!-- Block form (with inner content) -->
+<.button>
+  <.icon name="save" /> Save
+</.button>
+```
+
+## Comments
+
+### HEEx Comments
+
+Comments that don't appear in rendered HTML:
+
+```heex
+<%!-- This is a HEEx comment -->
+<%!-- It won't appear in the HTML sent to the browser -->
+```
+
+### HTML Comments
+
+Regular HTML comments are preserved:
+
+```heex
+<!-- This is an HTML comment -->
+<!-- It will appear in the rendered HTML -->
+```
+
+## Escaping Curly Braces
+
+If you need literal `{` or `}` in text:
+
+```heex
+<!-- Use HTML entities -->
+<p>This is a &lbrace;curly brace&rbrace;</p>
+
+<!-- Or EEx expressions -->
+<p>This is a <%= "{" %>curly brace<%= "}" %></p>
+```
+
+## Script and Style Tags
+
+Curly brace interpolation is **disabled** inside `<script>` and `<style>` tags:
+
+```heex
+<script>
+  // Use <%= %> for interpolation here
+  const userId = <%= @user.id %>;
+  const apiUrl = "<%= @api_url %>";
+</script>
+
+<style>
+  .theme-color {
+    color: <%= @theme_color %>;
+  }
+</style>
+```
+
+### Disabling Interpolation
+
+Use `phx-no-curly-interpolation` to disable `{...}` in any tag:
+
+```heex
+<div phx-no-curly-interpolation>
+  {This won't be interpolated}
+</div>
+```
+
+## Code Formatting
+
+HEEx templates support automatic formatting via `mix format`:
+
+```elixir
+# .formatter.exs
+[
+  inputs: [
+    "*.{heex,ex,exs}",
+    "{config,lib,test}/**/*.{heex,ex,exs}"
+  ]
+]
+```
+
+Format your code:
+
+```bash
+mix format
+```
+
+### Preventing Formatting
+
+Use the `noformat` modifier:
+
+```elixir
+~H"""
+noformat
+<div>
+    This   wonot    be formatted
+</div>
+"""
+```
+
+## Debug Annotations
+
+Enable debug annotations to see where components are rendered:
+
+```elixir
+# config/dev.exs
+config :phoenix_live_view,
+  debug_heex_annotations: true,
+  debug_attributes: true
+```
+
+### Debug Comments
+
+With `debug_heex_annotations: true`:
+
+```html
+<!-- @caller lib/app_web/live/home_live.ex:20 -->
+<!-- <AppWeb.Components.header> lib/app_web/components.ex:123 -->
+<header class="p-5">
+  <!-- @caller lib/app_web/live/home_live.ex:48 -->
+  <!-- <AppWeb.Components.button> lib/app_web/components.ex:456 -->
+  <button class="px-2 bg-indigo-500">Click</button>
+  <!-- </AppWeb.Components.button> -->
+</header>
+<!-- </AppWeb.Components.header> -->
+```
+
+### Debug Attributes
+
+With `debug_attributes: true`:
+
+```html
+<header data-phx-loc="125" class="p-5">
+  <button data-phx-loc="458" class="px-2">Click</button>
+</header>
+```
+
+<Warning>
+These options require `mix clean` and a full recompile to take effect.
+</Warning>
+
+## Template Best Practices
+
+<Accordion title="Avoid defining variables in templates">
+  **Don't do this:**
+  ```heex
+  <% total = @x + @y %>
+  <p>Total: {total}</p>
+  ```
+  
+  **Do this instead:**
+  ```elixir
+  def render(assigns) do
+    assigns = assign(assigns, :total, assigns.x + assigns.y)
+    ~H"<p>Total: {@total}</p>"
+  end
+  ```
+  
+  Variables disable change tracking!
+</Accordion>
+
+<Accordion title="Keep logic out of templates">
+  **Don't do this:**
+  ```heex
+  <p>Price: {if @discount, do: @price * 0.9, else: @price}</p>
+  ```
+  
+  **Do this instead:**
+  ```elixir
+  def render(assigns) do
+    assigns = assign(assigns, :final_price, calculate_price(assigns))
+    ~H"<p>Price: {@final_price}</p>"
+  end
+  
+  defp calculate_price(%{discount: true, price: price}), do: price * 0.9
+  defp calculate_price(%{price: price}), do: price
+  ```
+</Accordion>
+
+<Accordion title="Never access the assigns variable directly">
+  **Don't do this:**
+  ```heex
+  <div {assigns.attrs}>
+  ```
+  
+  **Do this instead:**
+  ```heex
+  <div {@attrs}>
+  ```
+  
+  Direct access to `assigns` disables change tracking.
+</Accordion>
+
+<Accordion title="Don't perform data loading in templates">
+  **Never do this:**
+  ```heex
+  <%= for user <- Repo.all(User) do %>
+    {user.name}
+  <% end %>
+  ```
+  
+  **Always load in callbacks:**
+  ```elixir
+  def mount(_params, _session, socket) do
+    {:ok, assign(socket, :users, Repo.all(User))}
+  end
+  ```
+</Accordion>
+
+## Common Patterns
+
+### Conditional Classes
+
+```heex
+<div class={[
+  "card",
+  @active && "card-active",
+  @large && "card-lg",
+  @color
+]}>
+```
+
+### Rendering Lists with Empty State
+
+```heex
+<div :if={@items == []}>
+  <p>No items found</p>
+</div>
+
+<div :if={@items != []}>
+  <div :for={item <- @items}>
+    {item.name}
+  </div>
+</div>
+```
+
+### Tables
+
+```heex
+<table>
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Email</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr :for={user <- @users}>
+      <td>{user.name}</td>
+      <td>{user.email}</td>
+      <td>
+        <button phx-click="edit" phx-value-id={user.id}>Edit</button>
+      </td>
+    </tr>
+  </tbody>
+</table>
+```
+
+### Forms
+
+```heex
+<.form for={@form} phx-submit="save" phx-change="validate">
+  <.input field={@form[:name]} label="Name" required />
+  <.input field={@form[:email]} label="Email" type="email" />
+  
+  <div class="actions">
+    <.button type="submit">Save</.button>
+    <.link href={~p"/cancel"}>Cancel</.link>
+  </div>
+</.form>
+```
+
+### Loading States
+
+```heex
+<div :if={@loading} class="spinner">
+  Loading...
+</div>
+
+<div :if={!@loading}>
+  <div :for={item <- @items}>
+    {item.title}
+  </div>
+</div>
+```
+
+### Error Messages
+
+```heex
+<div :if={@errors != []} class="alert alert-error">
+  <p :for={error <- @errors}>{error}</p>
+</div>
+```
+
+### Modal Dialogs
+
+```heex
+<div :if={@show_modal} class="modal-backdrop" phx-click="close_modal">
+  <div class="modal" phx-click-away="close_modal">
+    <div class="modal-header">
+      <h2>{@modal_title}</h2>
+      <button phx-click="close_modal">×</button>
+    </div>
+    <div class="modal-body">
+      {@modal_content}
+    </div>
+  </div>
+</div>
+```
+
+## Compilation and Performance
+
+HEEx templates are compiled to efficient Elixir code:
+
+- **Static parts** are computed once at compile time
+- **Dynamic parts** are only re-computed when their assigns change
+- **Change tracking** minimizes data sent over the wire
+- **Diffs** are computed automatically and sent to the client
+
+### What Gets Tracked?
+
+```heex
+<div id={"user-#{@user.id}"}>
+  {@user.name}
+</div>
+```
+
+If only `@user.name` changes:
+- `@user.id` is **not** re-evaluated
+- Only the `@user.name` text is sent to the client
+- The `id` attribute is not sent again
+
+## Summary
+
+- Use `~H` sigil for inline templates or `.html.heex` files for external templates
+- Interpolate with `{@assign}` for values and `{expression}` for computed values
+- Use `:if`, `:for`, and `:key` for control flow
+- Invoke components with `<.component>` syntax
+- Avoid variables and direct data access in templates
+- Keep complex logic in functions, not templates
+- Use `:key` with `:for` for efficient list updates
+- Enable debug annotations during development

@@ -1,0 +1,334 @@
+---
+title: Phoenix.LiveView.UploadEntry
+description: API reference for Phoenix.LiveView.UploadEntry module
+---
+
+The struct representing an individual upload entry (file).
+
+## Overview
+
+The `Phoenix.LiveView.UploadEntry` module defines the structure for individual files in an upload. Each file selected by the user becomes an entry that tracks its upload progress, validation status, and metadata.
+
+## Type Definition
+
+```elixir
+@type t :: %Phoenix.LiveView.UploadEntry{
+  progress: integer(),
+  preflighted?: boolean(),
+  upload_config: String.t() | atom(),
+  upload_ref: String.t(),
+  ref: String.t() | nil,
+  uuid: String.t() | nil,
+  valid?: boolean(),
+  done?: boolean(),
+  cancelled?: boolean(),
+  client_name: String.t() | nil,
+  client_relative_path: String.t() | nil,
+  client_size: integer() | nil,
+  client_type: String.t() | nil,
+  client_last_modified: integer() | nil,
+  client_meta: map() | nil
+}
+```
+
+## Struct Fields
+
+<ResponseField name="ref" type="String.t() | nil">
+  Unique reference identifier for this entry
+</ResponseField>
+
+<ResponseField name="uuid" type="String.t() | nil">
+  UUID generated after validation passes
+</ResponseField>
+
+<ResponseField name="upload_config" type="String.t() | atom()">
+  The name of the upload config this entry belongs to
+</ResponseField>
+
+<ResponseField name="upload_ref" type="String.t()">
+  Reference to the parent upload configuration
+</ResponseField>
+
+<ResponseField name="progress" type="integer()">
+  Upload progress percentage (0-100)
+</ResponseField>
+
+<ResponseField name="preflighted?" type="boolean()">
+  Whether the entry has been preflighted for upload. Default: false
+</ResponseField>
+
+<ResponseField name="valid?" type="boolean()">
+  Whether the entry passed validation. Default: false
+</ResponseField>
+
+<ResponseField name="done?" type="boolean()">
+  Whether the upload is complete (progress == 100). Default: false
+</ResponseField>
+
+<ResponseField name="cancelled?" type="boolean()">
+  Whether the upload was cancelled. Default: false
+</ResponseField>
+
+<ResponseField name="client_name" type="String.t() | nil">
+  The original filename from the client
+</ResponseField>
+
+<ResponseField name="client_relative_path" type="String.t() | nil">
+  Relative path when uploading directories (webkitdirectory)
+</ResponseField>
+
+<ResponseField name="client_size" type="integer() | nil">
+  File size in bytes reported by the client
+</ResponseField>
+
+<ResponseField name="client_type" type="String.t() | nil">
+  MIME type reported by the client (e.g., "image/jpeg")
+</ResponseField>
+
+<ResponseField name="client_last_modified" type="integer() | nil">
+  Last modified timestamp from the client
+</ResponseField>
+
+<ResponseField name="client_meta" type="map() | nil">
+  Additional metadata from the client
+</ResponseField>
+
+## Usage
+
+Entries are accessed through the upload configuration in your assigns:
+
+```elixir
+def render(assigns) do
+  ~H"""
+  <%= for entry <- @uploads.avatar.entries do %>
+    <div>
+      <p>File: <%= entry.client_name %></p>
+      <p>Size: <%= format_bytes(entry.client_size) %></p>
+      <p>Type: <%= entry.client_type %></p>
+      <progress value={entry.progress} max="100"><%= entry.progress %>%</progress>
+      
+      <%= if entry.done? do %>
+        <span>✓ Complete</span>
+      <% end %>
+    </div>
+  <% end %>
+  """
+end
+```
+
+## Entry States
+
+An entry can be in one of several states:
+
+### Pending
+
+```elixir
+entry.valid? == true
+entry.progress == 0
+entry.done? == false
+```
+
+File has been validated and is ready to upload.
+
+### In Progress
+
+```elixir
+entry.valid? == true
+entry.progress > 0 and entry.progress < 100
+entry.done? == false
+```
+
+File is currently being uploaded.
+
+### Complete
+
+```elixir
+entry.valid? == true
+entry.progress == 100
+entry.done? == true
+```
+
+File has been fully uploaded and is ready to consume.
+
+### Invalid
+
+```elixir
+entry.valid? == false
+```
+
+File failed validation (too large, wrong type, etc.).
+
+### Cancelled
+
+```elixir
+entry.cancelled? == true
+```
+
+Upload was cancelled by the server or client.
+
+## Displaying Progress
+
+```elixir
+def render(assigns) do
+  ~H"""
+  <div class="uploads">
+    <%= for entry <- @uploads.photos.entries do %>
+      <article class="upload-entry">
+        <figure>
+          <.live_img_preview entry={entry} />
+          <figcaption><%= entry.client_name %></figcaption>
+        </figure>
+
+        <progress value={entry.progress} max="100"><%= entry.progress %>%</progress>
+
+        <%= if entry.done? do %>
+          <span class="badge badge-success">Uploaded</span>
+        <% else %>
+          <button 
+            type="button" 
+            phx-click="cancel-upload" 
+            phx-value-ref={entry.ref}
+            aria-label="cancel"
+          >
+            Cancel
+          </button>
+        <% end %>
+      </article>
+    <% end %>
+  </div>
+  """
+end
+```
+
+## Filtering Entries
+
+### Get Valid Entries Only
+
+```elixir
+valid_entries = Enum.filter(@uploads.avatar.entries, & &1.valid?)
+```
+
+### Get Completed Entries
+
+```elixir
+completed_entries = Enum.filter(@uploads.avatar.entries, & &1.done?)
+```
+
+### Get In-Progress Entries
+
+```elixir
+in_progress_entries = 
+  @uploads.avatar.entries
+  |> Enum.filter(fn entry -> 
+    entry.valid? and !entry.done? and entry.progress > 0
+  end)
+```
+
+## Entry Metadata
+
+Access client metadata:
+
+```elixir
+<%= entry.client_name %>         # "avatar.jpg"
+<%= entry.client_size %>         # 1048576
+<%= entry.client_type %>         # "image/jpeg"
+<%= entry.client_last_modified %> # 1594171879000
+```
+
+## Consuming Entries
+
+After upload completes, consume the entries:
+
+```elixir
+def handle_event("save", _params, socket) do
+  uploaded_files =
+    consume_uploaded_entries(socket, :avatar, fn %{path: path}, entry ->
+      dest = Path.join("uploads", "#{entry.uuid}-#{entry.client_name}")
+      File.cp!(path, dest)
+      {:ok, ~p"/uploads/#{Path.basename(dest)}"}
+    end)
+
+  {:noreply, socket}
+end
+```
+
+## Directory Uploads
+
+For directory uploads using `webkitdirectory`:
+
+```heex
+<.live_file_input upload={@uploads.folder} webkitdirectory />
+```
+
+Access relative paths:
+
+```elixir
+for entry <- @uploads.folder.entries do
+  IO.inspect(entry.client_relative_path)  # "photos/vacation/beach.jpg"
+end
+```
+
+## Entry Errors
+
+Check for entry-specific errors:
+
+```elixir
+for {ref, error} <- @uploads.avatar.errors do
+  entry = Enum.find(@uploads.avatar.entries, & &1.ref == ref)
+  # Display error for this specific entry
+end
+```
+
+## Example: Image Preview with Progress
+
+```elixir
+def render(assigns) do
+  ~H"""
+  <form phx-change="validate" phx-submit="save">
+    <.live_file_input upload={@uploads.photos} />
+    
+    <div class="grid">
+      <%= for entry <- @uploads.photos.entries do %>
+        <div class="photo-entry">
+          <.live_img_preview entry={entry} />
+          
+          <div class="info">
+            <p class="filename"><%= entry.client_name %></p>
+            <p class="filesize"><%= format_bytes(entry.client_size) %></p>
+          </div>
+          
+          <%= if entry.done? do %>
+            <div class="badge success">✓</div>
+          <% else %>
+            <div class="progress-bar">
+              <div class="progress-fill" style={"width: #{entry.progress}%"}></div>
+            </div>
+            <button type="button" phx-click="cancel" phx-value-ref={entry.ref}>
+              Cancel
+            </button>
+          <% end %>
+        </div>
+      <% end %>
+    </div>
+    
+    <button type="submit" disabled={!can_submit?(@uploads.photos)}>
+      Upload <%= length(@uploads.photos.entries) %> files
+    </button>
+  </form>
+  """
+end
+
+defp can_submit?(upload) do
+  upload.entries != [] and
+  Enum.all?(upload.entries, & &1.valid?) and
+  upload.errors == []
+end
+
+defp format_bytes(bytes) do
+  cond do
+    bytes >= 1_048_576 -> "#{Float.round(bytes / 1_048_576, 2)} MB"
+    bytes >= 1_024 -> "#{Float.round(bytes / 1_024, 2)} KB"
+    true -> "#{bytes} bytes"
+  end
+end
+```

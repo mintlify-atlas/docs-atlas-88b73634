@@ -1,0 +1,492 @@
+---
+title: "JavaScript Interoperability"
+description: "Integrate JavaScript with Phoenix LiveView for enhanced client-side functionality"
+---
+
+Phoenix LiveView provides powerful JavaScript interoperability features, allowing you to integrate client-side JavaScript code with your server-side LiveView logic.
+
+## Setting Up LiveSocket
+
+To enable LiveView client/server interaction, instantiate a `LiveSocket`:
+
+```javascript
+import {Socket} from "phoenix"
+import {LiveSocket} from "phoenix_live_view"
+
+let csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
+let liveSocket = new LiveSocket("/live", Socket, {params: {_csrf_token: csrfToken}})
+liveSocket.connect()
+```
+
+## LiveSocket Options
+
+All options are passed to the `Phoenix.Socket` constructor, plus these LiveView-specific options:
+
+| Option | Description |
+|--------|-------------|
+| `bindingPrefix` | Prefix for Phoenix bindings. Default: `"phx-"` |
+| `params` | Connect params passed to view's mount callback. Can be an object or function |
+| `hooks` | User-defined hooks namespace for client callbacks |
+| `uploaders` | User-defined uploaders for direct-to-cloud uploads |
+| `metadata` | Additional metadata sent with events to the server |
+
+### Example with all options
+
+```javascript
+let Hooks = {}
+Hooks.MyHook = {
+  mounted() { console.log("Mounted!") }
+}
+
+let liveSocket = new LiveSocket("/live", Socket, {
+  params: {_csrf_token: csrfToken},
+  hooks: Hooks,
+  metadata: {
+    click: (e, el) => {
+      return {
+        altKey: e.altKey,
+        clientX: e.clientX,
+        clientY: e.clientY
+      }
+    }
+  }
+})
+```
+
+## LiveSocket Methods
+
+The `liveSocket` instance exposes these methods:
+
+<CodeGroup>
+
+```javascript Connection
+liveSocket.connect()
+```
+
+```javascript Debug
+liveSocket.enableDebug()
+liveSocket.disableDebug()
+```
+
+```javascript Latency Simulation
+liveSocket.enableLatencySim(1000) // 1 second latency
+liveSocket.disableLatencySim()
+```
+
+```javascript JS Execution
+liveSocket.execJS(el, encodedJS)
+```
+
+```javascript JS Commands
+const js = liveSocket.js()
+js.show(el, {transition: "fade-in"})
+```
+
+</CodeGroup>
+
+## Debugging Client Events
+
+Enable debug logging to troubleshoot client-server communication:
+
+```javascript
+// app.js
+let liveSocket = new LiveSocket(...)
+liveSocket.connect()
+window.liveSocket = liveSocket
+
+// In browser console
+>> liveSocket.enableDebug()
+```
+
+<Note>
+Debug state is stored in `sessionStorage` and persists for the browser session.
+</Note>
+
+## Simulating Latency
+
+Test loading states and user experience under network latency:
+
+```javascript
+// In browser console
+>> liveSocket.enableLatencySim(1000)
+[Log] latency simulator enabled for the duration of this browser session.
+      Call disableLatencySim() to disable
+```
+
+<Tip>
+Use latency simulation during development to ensure proper loading state handling, as localhost has near-zero latency.
+</Tip>
+
+## Handling Server-Pushed Events
+
+Receive events pushed from the server with `push_event/3`:
+
+### Server-side
+
+```elixir
+def handle_info({:item_updated, item}, socket) do
+  {:noreply, push_event(socket, "highlight", %{id: "item-#{item.id}"})}
+end
+```
+
+### Client-side
+
+```javascript
+window.addEventListener("phx:highlight", (e) => {
+  let el = document.getElementById(e.detail.id)
+  if(el) {
+    // Highlight logic
+    el.classList.add("highlight")
+    setTimeout(() => el.classList.remove("highlight"), 1000)
+  }
+})
+```
+
+<Note>
+Events dispatched from the server are prefixed with `phx:` in the browser.
+</Note>
+
+### Integrating with JS Commands
+
+Embed JS commands in data attributes:
+
+```heex
+<div id={"item-#{item.id}"} class="item" data-highlight={JS.transition("highlight")}>
+  {item.title}
+</div>
+```
+
+```javascript
+window.addEventListener("phx:highlight", (e) => {
+  document.querySelectorAll(`[data-highlight]`).forEach(el => {
+    if(el.id == e.detail.id){
+      liveSocket.execJS(el, el.getAttribute("data-highlight"))
+    }
+  })
+})
+```
+
+## Client Hooks
+
+Hooks provide lifecycle callbacks for custom client-side JavaScript when elements are added, updated, or removed.
+
+### Defining a Hook
+
+```javascript
+/**
+ * @type {import("phoenix_live_view").HooksOptions}
+ */
+let Hooks = {}
+
+Hooks.PhoneNumber = {
+  mounted() {
+    this.el.addEventListener("input", e => {
+      let match = this.el.value.replace(/\D/g, "").match(/^(\d{3})(\d{3})(\d{4})$/)
+      if(match) {
+        this.el.value = `${match[1]}-${match[2]}-${match[3]}`
+      }
+    })
+  }
+}
+
+let liveSocket = new LiveSocket("/live", Socket, {hooks: Hooks})
+```
+
+### Using the Hook
+
+```heex
+<input type="text" 
+       name="user[phone_number]" 
+       id="user-phone-number" 
+       phx-hook="PhoneNumber" />
+```
+
+<Warning>
+When using `phx-hook`, a unique DOM ID must always be set.
+</Warning>
+
+### Hook Lifecycle Callbacks
+
+| Callback | Description |
+|----------|-------------|
+| `mounted` | Element added to DOM, LiveView finished mounting |
+| `beforeUpdate` | Element about to be updated (must be synchronous) |
+| `updated` | Element updated by the server |
+| `destroyed` | Element removed from the page |
+| `disconnected` | Parent LiveView disconnected from server |
+| `reconnected` | Parent LiveView reconnected to server |
+
+<Note>
+Outside a LiveView, only `mounted` is invoked for elements present at DOM ready.
+</Note>
+
+### Hook Attributes and Methods
+
+Hooks have access to:
+
+<Tabs>
+  <Tab title="Attributes">
+    - `el` - The bound DOM node
+    - `liveSocket` - The LiveSocket instance
+  </Tab>
+  <Tab title="Push Methods">
+    - `pushEvent(event, payload, callback)` - Push event to LiveView server
+    - `pushEventTo(target, event, payload, callback)` - Push to specific LiveView/Component
+  </Tab>
+  <Tab title="Event Methods">
+    - `handleEvent(event, callback)` - Handle server-pushed events
+    - `removeHandleEvent(ref)` - Remove event handler
+  </Tab>
+  <Tab title="Upload Methods">
+    - `upload(name, files)` - Inject files into an uploader
+    - `uploadTo(target, name, files)` - Inject files into specific uploader
+  </Tab>
+  <Tab title="JS Methods">
+    - `js()` - Get JS command interface for DOM manipulation
+  </Tab>
+</Tabs>
+
+### Client-Server Communication
+
+<CodeGroup>
+
+```heex Template
+<div phx-hook="ClickMeHook" id="click-me">
+  Click me for a message!
+</div>
+```
+
+```javascript Hook with Reply
+Hooks.ClickMeHook = {
+  mounted() {
+    this.el.addEventListener("click", () => {
+      // Push event with callback
+      this.pushEvent("get_message", {}, (reply) => {
+        console.log(reply.message)
+      })
+    })
+  }
+}
+```
+
+```elixir Server Handler
+def handle_event("get_message", _params, socket) do
+  {:reply, %{message: "Hello from LiveView!"}, socket}
+end
+```
+
+</CodeGroup>
+
+### Receiving Server Events
+
+<CodeGroup>
+
+```heex Template
+<div id="chart" phx-hook="Chart"></div>
+```
+
+```javascript Hook
+Hooks.Chart = {
+  mounted(){
+    this.handleEvent("points", ({points}) => {
+      MyChartLib.addPoints(points)
+    })
+  }
+}
+```
+
+```elixir Server Push
+{:noreply, push_event(socket, "points", %{points: new_points})}
+```
+
+</CodeGroup>
+
+### Scoping Events
+
+For sibling components, namespace events to avoid conflicts:
+
+```elixir
+def update(%{id: id, points: points} = assigns, socket) do
+  socket =
+    socket
+    |> assign(assigns)
+    |> push_event("points-#{id}", points)
+
+  {:ok, socket}
+end
+```
+
+```javascript
+Hooks.Chart = {
+  mounted(){
+    this.handleEvent(`points-${this.el.id}`, (points) => {
+      MyChartLib.addPoints(points)
+    })
+  }
+}
+```
+
+## Colocated Hooks
+
+Define hooks next to component code for better organization:
+
+```elixir
+def phone_number_input(assigns) do
+  ~H"""
+  <input type="text" 
+         name="user[phone_number]" 
+         id="user-phone-number" 
+         phx-hook=".PhoneNumber" />
+  <script :type={Phoenix.LiveView.ColocatedHook} name=".PhoneNumber">
+    export default {
+      mounted() {
+        this.el.addEventListener("input", e => {
+          let match = this.el.value.replace(/\D/g, "").match(/^(\d{3})(\d{3})(\d{4})$/)
+          if(match) {
+            this.el.value = `${match[1]}-${match[2]}-${match[3]}`
+          }
+        })
+      }
+    }
+  </script>
+  """
+end
+```
+
+### Importing Colocated Hooks
+
+```javascript
+import {Socket} from "phoenix"
+import {LiveSocket} from "phoenix_live_view"
+import {hooks as colocatedHooks} from "phoenix-colocated/my_app"
+
+let liveSocket = new LiveSocket("/live", Socket, {
+  hooks: {...colocatedHooks}
+})
+```
+
+<Note>
+Colocated hooks require the dot syntax (`.PhoneNumber`) and are automatically prefixed with the module name to prevent conflicts.
+</Note>
+
+## Hook as Class
+
+Define hooks as classes extending `ViewHook`:
+
+```javascript
+import { ViewHook } from "phoenix_live_view"
+
+class MyHook extends ViewHook {
+  mounted() {
+    console.log("Custom hook mounted")
+  }
+}
+
+let liveSocket = new LiveSocket(..., {
+  hooks: {
+    MyHook
+  }
+})
+```
+
+## Advanced DOM Integration
+
+For libraries requiring full DOM control, use `onBeforeElUpdated`:
+
+```javascript
+let liveSocket = new LiveSocket("/live", Socket, {
+  hooks: Hooks,
+  dom: {
+    onBeforeElUpdated(from, to) {
+      // Preserve client-side attributes
+      for (const attr of from.attributes) {
+        if (attr.name.startsWith("data-js-")) {
+          to.setAttribute(attr.name, attr.value)
+        }
+      }
+    }
+  }
+})
+```
+
+<Warning>
+The `onBeforeElUpdated` callback is called just before DOM patching. The operation cannot be cancelled or deferred.
+</Warning>
+
+## JS Commands from JavaScript
+
+Execute JS commands from hooks or client code:
+
+```javascript
+// In a hook
+this.js().show(this.el, {transition: "fade-in"})
+
+// Via LiveSocket
+const el = document.querySelector("#my-element")
+liveSocket.js().hide(el, {transition: "fade-out"})
+```
+
+### Available JS Methods
+
+<Tabs>
+  <Tab title="Visibility">
+    - `show(el, opts)` - Show element
+    - `hide(el, opts)` - Hide element
+    - `toggle(el, opts)` - Toggle visibility
+  </Tab>
+  <Tab title="Classes">
+    - `addClass(el, names, opts)` - Add CSS classes
+    - `removeClass(el, names, opts)` - Remove CSS classes
+    - `toggleClass(el, names, opts)` - Toggle CSS classes
+  </Tab>
+  <Tab title="Attributes">
+    - `setAttribute(el, attr, val)` - Set attribute
+    - `removeAttribute(el, attr)` - Remove attribute
+    - `toggleAttribute(el, attr, val1, val2)` - Toggle attribute
+  </Tab>
+  <Tab title="Transitions">
+    - `transition(el, transition, opts)` - Apply CSS transition
+  </Tab>
+  <Tab title="Navigation">
+    - `push(el, event, opts)` - Push event to server
+    - `navigate(href, opts)` - Navigate with pushState
+    - `patch(href, opts)` - Patch with pushState
+  </Tab>
+</Tabs>
+
+See [JS Commands](/client/js-commands) for complete documentation.
+
+## Infinite Scroll Example
+
+Combine hooks with data attributes for complex interactions:
+
+```heex
+<div id="infinite-scroll" 
+     phx-hook="InfiniteScroll" 
+     data-page={@page}>
+  <!-- Content -->
+</div>
+```
+
+```javascript
+Hooks.InfiniteScroll = {
+  page() { return this.el.dataset.page },
+  mounted(){
+    this.pending = this.page()
+    window.addEventListener("scroll", e => {
+      if(this.pending == this.page() && scrollAt() > 90){
+        this.pending = this.page() + 1
+        this.pushEvent("load-more", {})
+      }
+    })
+  },
+  updated(){ this.pending = this.page() }
+}
+```
+
+## See Also
+
+- [Bindings](/client/bindings) - DOM event bindings
+- [JS Commands](/client/js-commands) - Phoenix.LiveView.JS module
+- [Hooks](/client/hooks) - Detailed hook documentation
+- [External Uploads](/client/external-uploads) - Client-side upload integration

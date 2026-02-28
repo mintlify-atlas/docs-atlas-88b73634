@@ -1,0 +1,373 @@
+---
+title: Phoenix.LiveView.UploadWriter
+description: API reference for Phoenix.LiveView.UploadWriter behavior
+---
+
+Behavior for writing uploaded chunks to a final destination.
+
+## Overview
+
+The `Phoenix.LiveView.UploadWriter` behavior defines a contract for custom upload handling. By default, uploads are written to temporary files, but you can implement custom writers to stream uploads to external storage, process them on-the-fly, or handle them in other ways.
+
+<Warning>
+Upload writers run inside the channel uploader process. Blocking work will block the channel, and errors will crash the channel process.
+</Warning>
+
+## Callbacks
+
+### init/1
+
+Initializes the writer with options.
+
+```elixir
+@callback init(opts :: term()) :: {:ok, state :: term()} | {:error, term()}
+```
+
+<ParamField path="opts" type="term()" required>
+  Options passed from the writer function in `allow_upload/3`
+</ParamField>
+
+<ResponseField name="result" type="{:ok, state} | {:error, term}">
+  Returns `{:ok, state}` to initialize successfully, or `{:error, reason}` on failure
+</ResponseField>
+
+### meta/1
+
+Returns metadata to be passed to the LiveView when consuming uploads.
+
+```elixir
+@callback meta(state :: term()) :: map()
+```
+
+<ParamField path="state" type="term()" required>
+  The current writer state
+</ParamField>
+
+<ResponseField name="metadata" type="map()">
+  Metadata map that will be available when consuming the upload
+</ResponseField>
+
+### write_chunk/2
+
+Writes a chunk of uploaded data.
+
+```elixir
+@callback write_chunk(data :: binary(), state :: term()) ::
+  {:ok, state :: term()} | {:error, reason :: term(), state :: term()}
+```
+
+<ParamField path="data" type="binary()" required>
+  Binary data chunk from the upload
+</ParamField>
+
+<ParamField path="state" type="term()" required>
+  The current writer state
+</ParamField>
+
+<ResponseField name="result" type="{:ok, state} | {:error, reason, state}">
+  Returns `{:ok, new_state}` on success, or `{:error, reason, state}` on failure
+</ResponseField>
+
+### close/2
+
+Called when the upload is complete or cancelled.
+
+```elixir
+@callback close(state :: term(), reason :: :done | :cancel | {:error, term()}) ::
+  {:ok, state :: term()} | {:error, term()}
+```
+
+<ParamField path="state" type="term()" required>
+  The current writer state
+</ParamField>
+
+<ParamField path="reason" type=":done | :cancel | {:error, term}" required>
+  Reason for closing:
+  - `:done` - Upload completed successfully
+  - `:cancel` - Upload was cancelled
+  - `{:error, reason}` - Upload failed with an error
+</ParamField>
+
+<ResponseField name="result" type="{:ok, state} | {:error, term}">
+  Returns `{:ok, state}` on successful cleanup, or `{:error, reason}` on failure
+</ResponseField>
+
+## Usage
+
+Define a custom writer in `allow_upload/3`:
+
+```elixir
+defmodule MyAppWeb.PageLive do
+  use Phoenix.LiveView
+
+  def mount(_params, _session, socket) do
+    socket =
+      socket
+      |> allow_upload(:avatar,
+        accept: :any,
+        writer: fn _name, _entry, _socket -> 
+          {MyApp.CustomWriter, level: :debug} 
+        end
+      )
+    
+    {:ok, socket}
+  end
+end
+```
+
+## Example: Logging Writer
+
+A simple writer that logs chunk sizes:
+
+```elixir
+defmodule MyApp.LoggingWriter do
+  @behaviour Phoenix.LiveView.UploadWriter
+
+  require Logger
+
+  @impl true
+  def init(opts) do
+    {:ok, %{total: 0, level: Keyword.fetch!(opts, :level)}}
+  end
+
+  @impl true
+  def meta(state) do
+    %{total_bytes: state.total, level: state.level}
+  end
+
+  @impl true
+  def write_chunk(data, state) do
+    size = byte_size(data)
+    Logger.log(state.level, "Received chunk of #{size} bytes")
+    {:ok, %{state | total: state.total + size}}
+  end
+
+  @impl true
+  def close(state, reason) do
+    Logger.log(state.level, "Closing upload: #{state.total} bytes, #{inspect(reason)}")
+    {:ok, state}
+  end
+end
+```
+
+Consume the upload:
+
+```elixir
+def handle_event("save", _params, socket) do
+  results =
+    consume_uploaded_entries(socket, :avatar, fn meta, entry ->
+      Logger.info("Upload complete: #{meta.total_bytes} bytes")
+      {:ok, meta}
+    end)
+  
+  {:noreply, socket}
+end
+```
+
+## Example: S3 Streaming Writer
+
+Stream uploads directly to S3:
+
+```elixir
+defmodule MyApp.S3Writer do
+  @behaviour Phoenix.LiveView.UploadWriter
+
+  alias ExAws.S3
+
+  @impl true
+  def init(opts) do
+    bucket = Keyword.fetch!(opts, :bucket)
+    key = Keyword.fetch!(opts, :key)
+    
+    {:ok, upload_id} = start_multipart_upload(bucket, key)
+    
+    {:ok, %{
+      bucket: bucket,
+      key: key,
+      upload_id: upload_id,
+      part_number: 1,
+      parts: [],
+      buffer: <<>>
+    }}
+  end
+
+  @impl true
+  def meta(state) do
+    %{
+      bucket: state.bucket,
+      key: state.key,
+      upload_id: state.upload_id
+    }
+  end
+
+  @impl true
+  def write_chunk(data, state) do
+    # Buffer data until we have at least 5MB (S3 minimum)
+    buffer = state.buffer <> data
+    
+    if byte_size(buffer) >= 5_242_880 do
+      case upload_part(state, buffer) do
+        {:ok, etag} ->
+          new_state = %{
+            state
+            | part_number: state.part_number + 1,
+              parts: [{state.part_number, etag} | state.parts],
+              buffer: <<>>
+          }
+          {:ok, new_state}
+        
+        {:error, reason} ->
+          {:error, reason, state}
+      end
+    else
+      {:ok, %{state | buffer: buffer}}
+    end
+  end
+
+  @impl true
+  def close(state, :done) do
+    # Upload final part if any data remains
+    state = if byte_size(state.buffer) > 0 do
+      {:ok, etag} = upload_part(state, state.buffer)
+      %{state | parts: [{state.part_number, etag} | state.parts]}
+    else
+      state
+    end
+    
+    # Complete multipart upload
+    complete_multipart_upload(state)
+    {:ok, state}
+  end
+
+  def close(state, :cancel) do
+    # Abort multipart upload
+    abort_multipart_upload(state)
+    {:ok, state}
+  end
+
+  def close(state, {:error, _reason}) do
+    # Abort on error
+    abort_multipart_upload(state)
+    {:ok, state}
+  end
+
+  # Private helper functions
+  defp start_multipart_upload(bucket, key) do
+    # Implementation details...
+  end
+
+  defp upload_part(state, data) do
+    # Implementation details...
+  end
+
+  defp complete_multipart_upload(state) do
+    # Implementation details...
+  end
+
+  defp abort_multipart_upload(state) do
+    # Implementation details...
+  end
+end
+```
+
+Use the S3 writer:
+
+```elixir
+def mount(_params, _session, socket) do
+  socket =
+    socket
+    |> allow_upload(:avatar,
+      accept: ~w(.jpg .jpeg .png),
+      writer: fn _name, entry, _socket ->
+        key = "uploads/#{entry.uuid}-#{entry.client_name}"
+        {MyApp.S3Writer, bucket: "my-bucket", key: key}
+      end
+    )
+  
+  {:ok, socket}
+end
+
+def handle_event("save", _params, socket) do
+  urls =
+    consume_uploaded_entries(socket, :avatar, fn meta, entry ->
+      url = "https://#{meta.bucket}.s3.amazonaws.com/#{meta.key}"
+      {:ok, url}
+    end)
+  
+  {:noreply, assign(socket, :uploaded_urls, urls)}
+end
+```
+
+## Example: Image Processing Writer
+
+Process images during upload:
+
+```elixir
+defmodule MyApp.ImageProcessor do
+  @behaviour Phoenix.LiveView.UploadWriter
+
+  @impl true
+  def init(opts) do
+    path = Keyword.fetch!(opts, :path)
+    {:ok, file} = File.open(path, [:write, :binary])
+    
+    {:ok, %{
+      file: file,
+      path: path,
+      bytes: 0
+    }}
+  end
+
+  @impl true
+  def meta(state) do
+    %{path: state.path, bytes: state.bytes}
+  end
+
+  @impl true
+  def write_chunk(data, state) do
+    case IO.binwrite(state.file, data) do
+      :ok ->
+        {:ok, %{state | bytes: state.bytes + byte_size(data)}}
+      
+      {:error, reason} ->
+        {:error, reason, state}
+    end
+  end
+
+  @impl true
+  def close(state, reason) do
+    File.close(state.file)
+    
+    case reason do
+      :done ->
+        # Process the completed image
+        process_image(state.path)
+        {:ok, state}
+      
+      _ ->
+        # Clean up on error/cancel
+        File.rm(state.path)
+        {:ok, state}
+    end
+  end
+
+  defp process_image(path) do
+    # Generate thumbnail, optimize, etc.
+    # ...
+  end
+end
+```
+
+## Default Writer
+
+If no writer is specified, LiveView uses `Phoenix.LiveView.UploadTmpFileWriter`, which writes to a temporary file that can be accessed via `path` in `consume_uploaded_entries/3`.
+
+## Best Practices
+
+1. **Handle errors gracefully**: Always return proper error tuples from `write_chunk/2`
+2. **Clean up resources**: Always clean up in `close/2`, regardless of reason
+3. **Buffer appropriately**: Consider buffering small chunks for efficiency
+4. **Validate early**: Perform validation in `init/1` when possible
+5. **Track state**: Use state to maintain upload progress and metadata
+6. **Avoid blocking**: Don't perform long-running operations in the writer
+7. **Log failures**: Log errors for debugging and monitoring

@@ -1,0 +1,274 @@
+---
+title: Phoenix.LiveView.Logger
+description: API reference for Phoenix.LiveView.Logger module
+---
+
+Instrumenter to handle logging of LiveView and LiveComponent life-cycle events.
+
+## Overview
+
+The `Phoenix.LiveView.Logger` module provides automatic logging for Phoenix LiveView and LiveComponent lifecycle events using Telemetry. It logs mount, handle_params, and handle_event callbacks with parameter filtering support.
+
+## Installation
+
+The logger is installed automatically when LiveView starts. By default, the log level is set to `:debug`.
+
+## Configuration
+
+### Module-Level Configuration
+
+Override the log level for an individual LiveView module:
+
+```elixir
+defmodule MyAppWeb.UserLive do
+  use Phoenix.LiveView, log: :debug
+  
+  # ...
+end
+```
+
+Disable logging for a specific LiveView:
+
+```elixir
+defmodule MyAppWeb.PrivateLive do
+  use Phoenix.LiveView, log: false
+  
+  # ...
+end
+```
+
+### Available Log Levels
+
+- `:debug` (default) - Logs all events
+- `:info` - Logs at info level
+- `:warn` - Logs warnings only
+- `:error` - Logs errors only
+- `false` - Disables logging for the module
+
+## Logged Events
+
+The following Telemetry events are automatically logged:
+
+### LiveView Events
+
+- `[:phoenix, :live_view, :mount, :start]` - LiveView mount begins
+- `[:phoenix, :live_view, :mount, :stop]` - LiveView mount completes
+- `[:phoenix, :live_view, :handle_params, :start]` - Handle params begins
+- `[:phoenix, :live_view, :handle_params, :stop]` - Handle params completes
+- `[:phoenix, :live_view, :handle_event, :start]` - Handle event begins
+- `[:phoenix, :live_view, :handle_event, :stop]` - Handle event completes
+
+### LiveComponent Events
+
+- `[:phoenix, :live_component, :handle_event, :start]` - Component event begins
+- `[:phoenix, :live_component, :handle_event, :stop]` - Component event completes
+
+## Log Format
+
+### Mount Logging
+
+**Start:**
+```
+MOUNT MyAppWeb.UserLive
+  Parameters: %{"id" => "123"}
+  Session: %{"user_token" => "..."}
+```
+
+**Stop:**
+```
+Replied in 45ms
+```
+
+### Handle Params Logging
+
+**Start:**
+```
+HANDLE PARAMS in MyAppWeb.UserLive
+  Parameters: %{"id" => "123", "tab" => "profile"}
+```
+
+**Stop:**
+```
+Replied in 12ms
+```
+
+### Handle Event Logging
+
+**LiveView Event Start:**
+```
+HANDLE EVENT "save" in MyAppWeb.FormLive
+  Parameters: %{"user" => %{"name" => "Alice"}}
+```
+
+**LiveComponent Event Start:**
+```
+HANDLE EVENT "delete" in MyAppWeb.PageLive
+  Component: MyAppWeb.UserComponent
+  Parameters: %{"id" => "123"}
+```
+
+**Stop:**
+```
+Replied in 23ms
+```
+
+## Parameter Filtering
+
+The logger automatically filters parameters based on `Phoenix.Logger` configuration.
+
+### Configure Parameter Filtering
+
+In your `config.exs`:
+
+```elixir
+config :phoenix, :filter_parameters, ["password", "token", "secret"]
+```
+
+**Before filtering:**
+```
+Parameters: %{"user" => %{"email" => "user@example.com", "password" => "secret123"}}
+```
+
+**After filtering:**
+```
+Parameters: %{"user" => %{"email" => "user@example.com", "password" => "[FILTERED]"}}
+```
+
+## Functions
+
+### install/0
+
+Installs telemetry handlers for LiveView logging. Called automatically on application start.
+
+```elixir
+@doc false
+install()
+```
+
+### Handler Functions
+
+These functions are called by Telemetry and are not intended for direct use:
+
+#### lv_mount_start/4
+
+Logs the start of a LiveView mount.
+
+```elixir
+lv_mount_start(event, measurement, metadata, config)
+```
+
+#### lv_mount_stop/4
+
+Logs the completion of a LiveView mount with duration.
+
+```elixir
+lv_mount_stop(event, measurement, metadata, config)
+```
+
+#### lv_handle_params_start/4
+
+Logs the start of handle_params callback.
+
+```elixir
+lv_handle_params_start(event, measurement, metadata, config)
+```
+
+#### lv_handle_params_stop/4
+
+Logs the completion of handle_params callback.
+
+```elixir
+lv_handle_params_stop(event, measurement, metadata, config)
+```
+
+#### lv_handle_event_start/4
+
+Logs the start of a LiveView event handler.
+
+```elixir
+lv_handle_event_start(event, measurement, metadata, config)
+```
+
+#### lv_handle_event_stop/4
+
+Logs the completion of a LiveView event handler.
+
+```elixir
+lv_handle_event_stop(event, measurement, metadata, config)
+```
+
+#### lc_handle_event_start/4
+
+Logs the start of a LiveComponent event handler.
+
+```elixir
+lc_handle_event_start(event, measurement, metadata, config)
+```
+
+#### lc_handle_event_stop/4
+
+Logs the completion of a LiveComponent event handler.
+
+```elixir
+lc_handle_event_stop(event, measurement, metadata, config)
+```
+
+## Connected vs Disconnected
+
+Mount and handle_params events are only logged for connected sockets. Initial HTTP render (disconnected mount) is not logged to reduce noise.
+
+Event handlers are logged for both connected and disconnected states since they only occur after connection.
+
+## Example Output
+
+```
+[debug] MOUNT MyAppWeb.DashboardLive
+  Parameters: %{}
+  Session: %{"user_id" => 42}
+[debug] Replied in 67ms
+
+[debug] HANDLE PARAMS in MyAppWeb.DashboardLive
+  Parameters: %{"tab" => "overview"}
+[debug] Replied in 8ms
+
+[debug] HANDLE EVENT "refresh" in MyAppWeb.DashboardLive
+  Parameters: %{}
+[debug] Replied in 145ms
+
+[debug] HANDLE EVENT "delete_item" in MyAppWeb.DashboardLive
+  Component: MyAppWeb.ItemComponent
+  Parameters: %{"id" => "123"}
+[debug] Replied in 34ms
+```
+
+## Telemetry Integration
+
+For custom telemetry handling, see the [Telemetry guide](./guides/server/telemetry.md).
+
+You can attach your own handlers to these events:
+
+```elixir
+:telemetry.attach(
+  "my-handler",
+  [:phoenix, :live_view, :mount, :stop],
+  &MyApp.Telemetry.handle_event/4,
+  %{}
+)
+```
+
+## Performance Monitoring
+
+Use the duration information from stop events for performance monitoring:
+
+```elixir
+def handle_event(
+  [:phoenix, :live_view, :mount, :stop],
+  %{duration: duration},
+  metadata,
+  _config
+) do
+  if duration > 1_000_000_000 do # 1 second in nanoseconds
+    Logger.warn("Slow mount detected: #{inspect(metadata.socket.view)}")
+  end
+end
+```

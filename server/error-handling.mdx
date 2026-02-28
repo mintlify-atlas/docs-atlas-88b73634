@@ -1,0 +1,336 @@
+---
+title: "Error Handling"
+description: "Understand how LiveView handles errors and exceptions during its lifecycle"
+---
+
+As with any other Elixir code, exceptions may happen during the LiveView life-cycle. This page describes how LiveView handles errors at different stages and how to implement robust error handling.
+
+## Expected vs Unexpected Scenarios
+
+### Expected Scenarios
+
+Expected errors are situations you anticipate might happen within your application, such as:
+- A user filling in a form with invalid data
+- A user attempting an unauthorized action
+- A resource not being found
+
+Handle these cases by storing error state in LiveView assigns and rendering error messages to the client.
+
+#### Example: Form Validation
+
+```elixir
+def handle_event("save", %{"user" => user_params}, socket) do
+  case Users.create_user(user_params) do
+    {:ok, user} ->
+      {:noreply, assign(socket, user: user)}
+    
+    {:error, changeset} ->
+      {:noreply, assign(socket, changeset: changeset)}
+  end
+end
+```
+
+#### Example: Flash Messages
+
+For one-off messages, use flash:
+
+```elixir
+if MyApp.Org.leave(socket.assigns.current_org, member) do
+  {:noreply, socket}
+else
+  {:noreply, put_flash(socket, :error, "last member cannot leave organization")}
+end
+```
+
+### Unexpected Scenarios
+
+Elixir developers tend to write assertive code. If we expect something to always succeed, we can explicitly match on its result:
+
+```elixir
+true = MyApp.Org.leave(socket.assigns.current_org, member)
+{:noreply, socket}
+```
+
+If `leave` fails and returns `false`, an exception is raised. This is a common pattern in Phoenix applications.
+
+<Info>
+By hiding UI elements for invalid actions (like the "Leave" button when you're the last member), you can treat those actions as unexpected scenarios and let them raise exceptions.
+</Info>
+
+## How LiveView Handles Exceptions
+
+LiveView reacts to exceptions in three different ways, depending on where it is in its life-cycle.
+
+### Exceptions During HTTP Mount
+
+<Steps>
+  <Step title="Initial HTTP request">
+    When you first access a LiveView, a regular HTTP request is sent to the server.
+  </Step>
+  <Step title="Mount is invoked">
+    The `mount` callback is invoked and a page is rendered.
+  </Step>
+  <Step title="Exception handling">
+    Any exception here is caught, logged, and converted to an exception page by Phoenix error views - exactly like controllers.
+  </Step>
+</Steps>
+
+```elixir
+def mount(%{"org_id" => org_id}, _session, socket) do
+  organizations_query = Ecto.assoc(socket.assigns.current_user, :organizations)
+  org = Repo.get!(organizations_query, org_id)  # May raise Ecto.NoResultsError
+  {:ok, assign(socket, org: org)}
+end
+```
+
+If `org_id` doesn't exist or the user doesn't have access, `Repo.get!` raises `Ecto.NoResultsError`, which is converted to a 404 page.
+
+### Exceptions During Connected Mount
+
+<Steps>
+  <Step title="Initial HTTP succeeds">
+    The initial HTTP request renders successfully.
+  </Step>
+  <Step title="WebSocket connection">
+    LiveView connects to the server using a stateful connection (typically WebSocket).
+  </Step>
+  <Step title="Process spawned">
+    A long-running lightweight Elixir process is spawned, invoking `mount` again.
+  </Step>
+  <Step title="Exception causes crash">
+    An exception crashes the LiveView process and is logged.
+  </Step>
+  <Step title="Client reloads page">
+    Once the client notices the crash, it fully reloads the page.
+  </Step>
+</Steps>
+
+<Note>
+LiveView will reload the page in case of errors, making it fail as if LiveView was not involved in the rendering in the first place.
+</Note>
+
+### Exceptions After Connected Mount
+
+Once your LiveView is mounted and connected:
+
+<Steps>
+  <Step title="Exception occurs">
+    Any error causes the LiveView process to crash and be logged.
+  </Step>
+  <Step title="Client remounts">
+    The client remounts the LiveView over the stateful connection, without reloading the page.
+  </Step>
+  <Step title="State recovery">
+    If remounting succeeds, the LiveView goes back to a working state with updated information.
+  </Step>
+</Steps>
+
+#### Example: Race Condition
+
+Two users try to leave the organization at the same time:
+
+```elixir
+true = MyApp.Org.leave(socket.assigns.current_org, member)
+{:noreply, socket}
+```
+
+1. Both users see the "Leave" button
+2. Only one succeeds; the other raises an exception
+3. The failing client remounts the LiveView
+4. After remount, the UI shows there's only one user left
+5. The "Leave" button is no longer shown
+
+<Info>
+By remounting, we often update the state of the page, allowing exceptions to be automatically handled.
+</Info>
+
+## State Loss and Recovery
+
+When a LiveView crashes, its current state is lost. However, LiveView provides mechanisms and best practices to ensure users see the same page during reconnections.
+
+### Recovery Best Practices
+
+<Steps>
+  <Step title="Store state in URL parameters">
+    Keep important state in query parameters so it's restored on remount.
+  </Step>
+  <Step title="Persist to database">
+    Store critical state in the database rather than in memory.
+  </Step>
+  <Step title="Use automatic form recovery">
+    Phoenix automatically resubmits form data on reconnection.
+  </Step>
+</Steps>
+
+See the [Deployments](/server/deployments) guide for more information.
+
+## Error Handling Patterns
+
+### Pattern 1: Defensive Checking
+
+Explicitly handle expected failure cases:
+
+```elixir
+def handle_event("delete", %{"id" => id}, socket) do
+  case MyApp.Items.delete(id, socket.assigns.current_user) do
+    {:ok, _item} ->
+      {:noreply, stream_delete(socket, :items, id)}
+    
+    {:error, :unauthorized} ->
+      {:noreply, put_flash(socket, :error, "You cannot delete this item")}
+    
+    {:error, reason} ->
+      {:noreply, put_flash(socket, :error, "Could not delete: #{reason}")}
+  end
+end
+```
+
+### Pattern 2: Assertive Code
+
+Let unexpected failures raise exceptions:
+
+```elixir
+def handle_event("delete", %{"id" => id}, socket) do
+  # If delete returns false, raise an error
+  # The user shouldn't be able to trigger this anyway
+  true = MyApp.Items.delete!(id, socket.assigns.current_user)
+  {:noreply, stream_delete(socket, :items, id)}
+end
+```
+
+<Tip>
+The choice between defensive checking and assertive code depends on:
+- Likelihood of the error occurring
+- Whether you want to show a friendly message vs. let it crash
+- Your team's preferences and conventions
+</Tip>
+
+### Pattern 3: Try/Rescue for External Services
+
+Wrap external service calls that might fail:
+
+```elixir
+def handle_event("charge", %{"amount" => amount}, socket) do
+  try do
+    result = PaymentService.charge(socket.assigns.user, amount)
+    {:noreply, assign(socket, payment: result)}
+  rescue
+    PaymentService.Error ->
+      {:noreply, put_flash(socket, :error, "Payment failed. Please try again.")}
+  end
+end
+```
+
+### Pattern 4: Async Error Handling
+
+Handle errors in async operations:
+
+```elixir
+def mount(_params, _session, socket) do
+  {:ok, assign_async(socket, :data, fn -> load_data() end)}
+end
+
+defp load_data do
+  case ExternalAPI.fetch() do
+    {:ok, data} -> {:ok, %{data: data}}
+    {:error, reason} -> {:error, reason}
+  end
+end
+
+# In template
+<.async_result :let={data} assign={@data}>
+  <:loading>Loading...</:loading>
+  <:failed :let={_reason}>Failed to load data. <button phx-click="retry">Retry</button></:failed>
+  {data}
+</.async_result>
+```
+
+## Common Error Scenarios
+
+### Authentication Errors
+
+```elixir
+def mount(_params, %{"user_token" => token}, socket) do
+  case Users.get_user_by_token(token) do
+    nil -> {:ok, redirect(socket, to: "/login")}
+    user -> {:ok, assign(socket, current_user: user)}
+  end
+end
+```
+
+### Authorization Errors
+
+```elixir
+def mount(%{"org_id" => org_id}, _session, socket) do
+  user = socket.assigns.current_user
+  org = Repo.get!(Ecto.assoc(user, :organizations), org_id)
+  {:ok, assign(socket, org: org)}
+end
+```
+
+### Validation Errors
+
+```elixir
+def handle_event("validate", %{"form" => params}, socket) do
+  changeset = MySchema.changeset(%MySchema{}, params)
+  {:noreply, assign(socket, changeset: changeset)}
+end
+```
+
+## Logging and Monitoring
+
+LiveView automatically logs exceptions, but you may want additional monitoring:
+
+```elixir
+def handle_event("critical_action", params, socket) do
+  try do
+    result = perform_critical_action(params)
+    {:noreply, assign(socket, result: result)}
+  rescue
+    e ->
+      # Log to external monitoring service
+      ErrorTracker.report(e, __STACKTRACE__, socket: socket, params: params)
+      reraise e, __STACKTRACE__
+  end
+end
+```
+
+## Testing Error Handling
+
+Test both happy and error paths:
+
+```elixir
+test "handles missing organization gracefully", %{conn: conn} do
+  {:ok, view, _html} = live(conn, "/orgs/999")
+  assert_redirected(view, "/")
+end
+
+test "shows error when delete fails", %{conn: conn} do
+  {:ok, view, _html} = live(conn, "/items")
+  
+  # Stub delete to return error
+  stub(ItemsMock, :delete, fn _, _ -> {:error, :unauthorized} end)
+  
+  view |> element("button[phx-click=delete]") |> render_click()
+  assert has_element?(view, ".alert-error", "You cannot delete this item")
+end
+```
+
+## Best Practices
+
+1. **Use assertive code when appropriate**: If users shouldn't be able to trigger an action, let it raise
+2. **Handle expected errors gracefully**: Show friendly messages for validation and business logic errors
+3. **Keep state in URLs and database**: This helps with recovery after crashes
+4. **Test error paths**: Don't just test the happy path
+5. **Monitor production errors**: Use error tracking services to catch unexpected issues
+6. **Use async_result for async errors**: Handle loading and error states in your UI
+7. **Leverage LiveView's recovery**: Trust the remounting mechanism to help users recover
+
+## Summary
+
+- **Expected errors**: Handle with assigns and flash messages
+- **Unexpected errors**: Let them raise and trust LiveView's recovery mechanisms
+- **HTTP mount errors**: Converted to error pages like controllers
+- **Connected mount errors**: Trigger full page reload
+- **Post-mount errors**: Trigger automatic remount without page reload
+- **State recovery**: Use URL params, database, and form recovery to maintain state

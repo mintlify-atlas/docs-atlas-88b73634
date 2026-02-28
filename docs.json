@@ -1,122 +1,134 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Phoenix LiveView",
+  "theme": "palm",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#F05423",
+    "light": "#FD7E55",
+    "dark": "#D94A1F"
   },
-  "favicon": "/favicon.svg",
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/phoenixframework/phoenix_live_view"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/phoenixframework/phoenix_live_view"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Getting Started",
             "pages": [
-              "index",
+              "introduction",
               "quickstart",
-              "development"
+              "installation"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "core/liveview-lifecycle",
+              "core/components",
+              "core/live-components",
+              "core/templates",
+              "core/assigns-state"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Server-Side Features",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "server/live-navigation",
+              "server/async-operations",
+              "server/uploads",
+              "server/live-layouts",
+              "server/error-handling",
+              "server/telemetry",
+              "server/deployments",
+              "server/security",
+              "server/internationalization"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Client-Side Integration",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "client/bindings",
+              "client/js-interop",
+              "client/form-bindings",
+              "client/js-commands",
+              "client/hooks",
+              "client/syncing-changes",
+              "client/external-uploads"
+            ]
+          },
+          {
+            "group": "Testing",
+            "pages": [
+              "testing/overview",
+              "testing/liveview-tests",
+              "testing/component-tests"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/streams",
+              "advanced/change-tracking",
+              "advanced/debugging",
+              "advanced/performance"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "API Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Core Modules",
             "pages": [
-              "api-reference/introduction"
+              "api/phoenix-liveview",
+              "api/phoenix-component",
+              "api/phoenix-live-component",
+              "api/phoenix-liveview-js"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Routing & Controllers",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "api/phoenix-liveview-router",
+              "api/phoenix-liveview-controller"
+            ]
+          },
+          {
+            "group": "Testing",
+            "pages": [
+              "api/phoenix-liveviewtest"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "api/phoenix-liveview-socket",
+              "api/phoenix-liveview-htmlformatter",
+              "api/phoenix-liveview-logger"
+            ]
+          },
+          {
+            "group": "Uploads",
+            "pages": [
+              "api/phoenix-liveview-uploadconfig",
+              "api/phoenix-liveview-uploadentry",
+              "api/phoenix-liveview-uploadwriter"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

@@ -1,0 +1,505 @@
+---
+title: Phoenix.LiveView.JS
+description: Client-side JavaScript utility commands
+---
+
+## Overview
+
+Provides commands for executing JavaScript utility operations on the client. JS commands support a variety of utility operations for common client-side needs, such as adding or removing CSS classes, setting attributes, showing or hiding content, and transitioning animations.
+
+JS commands are DOM-patch aware, so operations applied by the JS APIs will stick to elements across patches from the server.
+
+## Creating JS Commands
+
+All functions accept an optional `%JS{}` struct as the first argument for chaining:
+
+```elixir
+JS.push("save") |> JS.hide(to: "#modal")
+```
+
+## Client Utility Commands
+
+### show/1
+
+Shows elements with optional transitions.
+
+```elixir
+JS.show(to: "#item")
+JS.show(to: "#item", transition: "fade-in-scale")
+```
+
+<ParamField path="opts" type="keyword" default="[]">
+  Options:
+  - `:to` - DOM selector to show (default: interacted element)
+  - `:transition` - CSS classes or 3-tuple `{transition, start, end}`
+  - `:time` - Transition duration in ms (default: 200)
+  - `:display` - Display value when showing (default: `"block"`)
+  - `:blocking` - Block UI during transition (default: `true`)
+</ParamField>
+
+<ResponseField name="return" type="JS.t()">
+  Updated JS command struct.
+</ResponseField>
+
+**Events dispatched:**
+- `phx:show-start` - When show begins
+- `phx:show-end` - After transition completes
+
+### hide/1
+
+Hides elements with optional transitions.
+
+```elixir
+JS.hide(to: "#item")
+JS.hide(to: "#item", transition: "fade-out-scale")
+```
+
+<ParamField path="opts" type="keyword" default="[]">
+  Options:
+  - `:to` - DOM selector to hide (default: interacted element)
+  - `:transition` - CSS classes or 3-tuple
+  - `:time` - Transition duration in ms (default: 200)
+  - `:blocking` - Block UI during transition (default: `true`)
+</ParamField>
+
+**Events dispatched:**
+- `phx:hide-start` - When hide begins
+- `phx:hide-end` - After transition completes
+
+### toggle/1
+
+Toggles element visibility based on current state.
+
+```elixir
+JS.toggle(to: "#item")
+JS.toggle(to: "#item", in: "fade-in", out: "fade-out")
+```
+
+<ParamField path="opts" type="keyword" default="[]">
+  Options:
+  - `:to` - DOM selector (default: interacted element)
+  - `:in` - CSS classes or 3-tuple for showing
+  - `:out` - CSS classes or 3-tuple for hiding
+  - `:time` - Transition duration in ms (default: 200)
+  - `:display` - Display value when showing (default: `"block"`)
+  - `:blocking` - Block UI during transition (default: `true`)
+</ParamField>
+
+### add_class/1
+
+Adds CSS classes to elements.
+
+```elixir
+JS.add_class("highlight")
+JS.add_class("highlight underline", to: "#item")
+```
+
+<ParamField path="names" type="string">
+  Space-separated class names to add.
+</ParamField>
+
+<ParamField path="opts" type="keyword" default="[]">
+  Options:
+  - `:to` - DOM selector (default: interacted element)
+  - `:transition` - CSS classes or 3-tuple
+  - `:time` - Transition duration in ms (default: 200)
+  - `:blocking` - Block UI during transition (default: `true`)
+</ParamField>
+
+### remove_class/1
+
+Removes CSS classes from elements.
+
+```elixir
+JS.remove_class("highlight")
+JS.remove_class("highlight underline", to: "#item")
+```
+
+<ParamField path="names" type="string">
+  Space-separated class names to remove.
+</ParamField>
+
+<ParamField path="opts" type="keyword" default="[]">
+  Same options as `add_class/1`.
+</ParamField>
+
+### toggle_class/1
+
+Toggles CSS classes based on presence.
+
+```elixir
+JS.toggle_class("active")
+JS.toggle_class("active", to: "#item")
+```
+
+<ParamField path="names" type="string">
+  Space-separated class names to toggle.
+</ParamField>
+
+<ParamField path="opts" type="keyword" default="[]">
+  Same options as `add_class/1`.
+</ParamField>
+
+### transition/1
+
+Applies temporary transition to elements for animations.
+
+```elixir
+JS.transition("shake", to: "#item")
+JS.transition({"ease-out duration-300", "opacity-0", "opacity-100"}, time: 300)
+```
+
+<ParamField path="transition" type="string | tuple">
+  CSS classes or 3-tuple for transition.
+</ParamField>
+
+<ParamField path="opts" type="keyword" default="[]">
+  Options:
+  - `:to` - DOM selector (default: interacted element)
+  - `:time` - Transition duration in ms (default: 200)
+  - `:blocking` - Block UI during transition (default: `true`)
+</ParamField>
+
+### set_attribute/1
+
+Sets an attribute on elements.
+
+```elixir
+JS.set_attribute({"aria-expanded", "true"}, to: "#dropdown")
+```
+
+<ParamField path="attr_value" type="{string, string}">
+  Tuple containing attribute name and value.
+</ParamField>
+
+<ParamField path="opts" type="keyword" default="[]">
+  Options:
+  - `:to` - DOM selector (default: interacted element)
+</ParamField>
+
+<Warning>
+`set_attribute/1` cannot be used to set DOM properties like input `value`. Use `dispatch/2` with a custom event listener instead.
+</Warning>
+
+### remove_attribute/1
+
+Removes an attribute from elements.
+
+```elixir
+JS.remove_attribute("aria-expanded", to: "#dropdown")
+```
+
+<ParamField path="attr" type="string">
+  The attribute name to remove.
+</ParamField>
+
+<ParamField path="opts" type="keyword" default="[]">
+  Options:
+  - `:to` - DOM selector (default: interacted element)
+</ParamField>
+
+### toggle_attribute/1
+
+Toggles an attribute based on presence.
+
+```elixir
+JS.toggle_attribute({"open", "true"}, to: "#dialog")
+JS.toggle_attribute({"aria-expanded", "true", "false"}, to: "#dropdown")
+```
+
+<ParamField path="attr" type="{string, string} | {string, string, string}">
+  2-tuple to set/remove, or 3-tuple to toggle between two values.
+</ParamField>
+
+<ParamField path="opts" type="keyword" default="[]">
+  Options:
+  - `:to` - DOM selector (default: interacted element)
+</ParamField>
+
+### ignore_attributes/1
+
+Marks attributes as ignored, skipping them when patching the DOM.
+
+```elixir
+JS.ignore_attributes("open", to: "#my-dialog")
+JS.ignore_attributes(["open", "data-*"], to: "#my-dialog")
+```
+
+<ParamField path="attrs" type="string | list">
+  Attribute name(s) to ignore. Use `*` as wildcard.
+</ParamField>
+
+<ParamField path="opts" type="keyword" default="[]">
+  Options:
+  - `:to` - DOM selector (default: interacted element)
+</ParamField>
+
+<Note>
+Must be used with `phx-mounted` binding. Does not affect initial render.
+</Note>
+
+### dispatch/2
+
+Dispatches a DOM event to elements.
+
+```elixir
+JS.dispatch("click", to: ".nav")
+JS.dispatch("my_app:clipcopy", to: "#element", detail: %{foo: "bar"})
+```
+
+<ParamField path="event" type="string">
+  The event name to dispatch.
+</ParamField>
+
+<ParamField path="opts" type="keyword" default="[]">
+  Options:
+  - `:to` - DOM selector (default: interacted element)
+  - `:detail` - Detail map for the event
+  - `:bubbles` - Whether event bubbles (default: `true`)
+  - `:blocking` - Block UI until `event.detail.done()` is called
+</ParamField>
+
+<Note>
+All events are `CustomEvent` except `"click"` which is `MouseEvent`.
+</Note>
+
+## Focus Commands
+
+### focus/1
+
+Sends focus to a selector.
+
+```elixir
+JS.focus(to: "main")
+```
+
+<ParamField path="opts" type="keyword" default="[]">
+  Options:
+  - `:to` - DOM selector (default: interacted element)
+</ParamField>
+
+### focus_first/1
+
+Sends focus to the first focusable child.
+
+```elixir
+JS.focus_first(to: "#modal")
+```
+
+<ParamField path="opts" type="keyword" default="[]">
+  Options:
+  - `:to` - DOM selector (default: interacted element)
+</ParamField>
+
+### push_focus/1
+
+Pushes focus from the source element to be later popped.
+
+```elixir
+JS.push_focus()
+JS.push_focus(to: "#my-button")
+```
+
+<ParamField path="opts" type="keyword" default="[]">
+  Options:
+  - `:to` - DOM selector (default: interacted element)
+</ParamField>
+
+### pop_focus/0
+
+Focuses the last pushed element.
+
+```elixir
+JS.pop_focus()
+```
+
+## Navigation Commands
+
+### push/1
+
+Pushes an event to the server.
+
+```elixir
+JS.push("clicked")
+JS.push("save", value: %{id: 123}, target: @myself)
+```
+
+<ParamField path="event" type="string">
+  The event name to push.
+</ParamField>
+
+<ParamField path="opts" type="keyword" default="[]">
+  Options:
+  - `:target` - Selector or component ID (overrides `phx-target`)
+  - `:loading` - Selector to apply loading classes
+  - `:page_loading` - Trigger page loading events (default: `false`)
+  - `:value` - Map of values to send (merged with `phx-value-*`)
+</ParamField>
+
+### navigate/1
+
+Sends a navigation event to the server and updates browser history.
+
+```elixir
+JS.navigate("/my-path")
+JS.navigate("/my-path", replace: true)
+```
+
+<ParamField path="href" type="string">
+  The path to navigate to.
+</ParamField>
+
+<ParamField path="opts" type="keyword" default="[]">
+  Options:
+  - `:replace` - Replace browser history (default: `false`)
+</ParamField>
+
+### patch/1
+
+Sends a patch event to the server and updates browser history.
+
+```elixir
+JS.patch("/my-path")
+JS.patch("/my-path", replace: true)
+```
+
+<ParamField path="href" type="string">
+  The path to patch to.
+</ParamField>
+
+<ParamField path="opts" type="keyword" default="[]">
+  Options:
+  - `:replace` - Replace browser history (default: `false`)
+</ParamField>
+
+## Utility Commands
+
+### exec/1
+
+Executes JS commands located in an element's attribute.
+
+```elixir
+JS.exec("phx-remove", to: "#modal")
+```
+
+<ParamField path="attr" type="string">
+  The attribute containing the JS command.
+</ParamField>
+
+<ParamField path="opts" type="keyword" default="[]">
+  Options:
+  - `:to` - DOM selector (default: interacted element)
+</ParamField>
+
+**Example:**
+
+```heex
+<div id="modal" phx-remove={JS.hide("#modal")}>...</div>
+<button phx-click={JS.exec("phx-remove", to: "#modal")}>close</button>
+```
+
+### concat/2
+
+Combines two JS commands, appending the second to the first.
+
+```elixir
+JS.concat(JS.push("save"), JS.hide(to: "#modal"))
+```
+
+<ParamField path="first" type="JS.t()">
+  First JS command.
+</ParamField>
+
+<ParamField path="second" type="JS.t()">
+  Second JS command.
+</ParamField>
+
+<ResponseField name="return" type="JS.t()">
+  Combined JS command.
+</ResponseField>
+
+## DOM Selectors
+
+All commands accept a `:to` option with these formats:
+
+### String Selectors
+
+```elixir
+JS.show(to: "#modal")
+JS.show(to: ".notification")
+JS.show(to: "body a:nth-child(2)")
+```
+
+### Scoped Selectors
+
+```elixir
+JS.show(to: {:inner, ".menu"})
+JS.show(to: {:closest, ".container"})
+```
+
+<ParamField path="scope" type="atom">
+  Scope type:
+  - `:inner` - Target element within the interacted element
+  - `:closest` - Target closest element upwards from interacted element
+  - `:document` - Document-level selector (equivalent to string)
+</ParamField>
+
+**Example:**
+
+```heex
+<div phx-click={JS.show(to: {:inner, ".menu"})}>
+  <div>Open me</div>
+  <div class="menu hidden">
+    I'm in the dropdown menu
+  </div>
+</div>
+```
+
+## Examples
+
+### Modal with Show/Hide
+
+```elixir
+def hide_modal(js \\ %JS{}) do
+  js
+  |> JS.hide(transition: "fade-out", to: "#modal")
+  |> JS.hide(transition: "fade-out-scale", to: "#modal-content")
+end
+
+def modal(assigns) do
+  ~H"""
+  <div id="modal" phx-remove={hide_modal()}>
+    <div id="modal-content" phx-click-away={hide_modal()}>
+      <button phx-click={hide_modal()}>✖</button>
+      {@text}
+    </div>
+  </div>
+  """
+end
+```
+
+### Custom Clipboard Event
+
+```javascript
+// In app.js
+window.addEventListener("my_app:clipcopy", (event) => {
+  if ("clipboard" in navigator) {
+    const text = event.target.textContent;
+    navigator.clipboard.writeText(text);
+  }
+});
+```
+
+```heex
+<button phx-click={JS.dispatch("my_app:clipcopy", to: "#code")}>
+  Copy content
+</button>
+```
+
+### Loading States
+
+```heex
+<button phx-click={JS.push("save", loading: ".form")}>
+  Save
+</button>
+```

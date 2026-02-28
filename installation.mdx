@@ -1,0 +1,286 @@
+---
+title: Installation
+description: Learn how to install Phoenix LiveView in new and existing Phoenix applications.
+---
+
+Phoenix LiveView is included by default in Phoenix 1.6+ applications. If you're creating a new app, you're all set! For existing applications, this guide will walk you through adding LiveView.
+
+## New Phoenix applications
+
+<Note>
+  LiveView ships by default in new Phoenix applications (v1.6+). No additional installation is required.
+</Note>
+
+After you [install Elixir](https://elixir-lang.org/install.html) on your machine, create your first LiveView app in two steps:
+
+```bash
+mix archive.install hex phx_new
+mix phx.new demo
+```
+
+That's it! Your new Phoenix app includes:
+- LiveView dependencies in `mix.exs`
+- Client-side JavaScript for WebSocket connections
+- Routing configuration
+- Core Components for common UI elements
+
+Start your app with `mix phx.server` and begin building LiveViews.
+
+## Existing Phoenix applications
+
+If you have an existing Phoenix application (v1.6+) without LiveView, follow these steps to add it.
+
+<Steps>
+  <Step title="Add dependencies">
+    Add `phoenix_live_view` to your `mix.exs` dependencies:
+
+    ```elixir
+    defp deps do
+      [
+        {:phoenix, "~> 1.6.15 or ~> 1.7.0 or ~> 1.8.0"},
+        {:phoenix_live_view, "~> 1.0"},
+        {:phoenix_html, "~> 3.3 or ~> 4.0 or ~> 4.1"},
+        {:phoenix_template, "~> 1.0"},
+        {:telemetry, "~> 0.4.2 or ~> 1.0"},
+        # ... other dependencies
+      ]
+    end
+    ```
+
+    Then install the dependencies:
+
+    ```bash
+    mix deps.get
+    ```
+  </Step>
+
+  <Step title="Update your endpoint configuration">
+    Update your endpoint configuration in `config/config.exs` to include live view signing salt:
+
+    ```elixir
+    config :my_app, MyAppWeb.Endpoint,
+      # ... existing config
+      live_view: [signing_salt: "YOUR_SECRET_SALT"]
+    ```
+
+    Generate a unique signing salt:
+
+    ```bash
+    mix phx.gen.secret 32
+    ```
+
+    Copy the output and use it as your signing salt.
+  </Step>
+
+  <Step title="Configure the LiveView socket">
+    In your endpoint file `lib/my_app_web/endpoint.ex`, add a LiveView socket:
+
+    ```elixir
+    defmodule MyAppWeb.Endpoint do
+      use Phoenix.Endpoint, otp_app: :my_app
+
+      # Add this socket declaration:
+      socket "/live", Phoenix.LiveView.Socket,
+        websocket: [connect_info: [session: @session_options]]
+
+      # ... rest of your endpoint config
+    end
+    ```
+  </Step>
+
+  <Step title="Add LiveView to your router">
+    Import LiveView helpers in your router:
+
+    ```elixir
+    defmodule MyAppWeb.Router do
+      use MyAppWeb, :router
+      import Phoenix.LiveView.Router
+
+      # ... rest of your router
+    end
+    ```
+  </Step>
+
+  <Step title="Install JavaScript dependencies">
+    Add the LiveView JavaScript client to your `assets/package.json`:
+
+    ```json
+    {
+      "dependencies": {
+        "phoenix": "file:../deps/phoenix",
+        "phoenix_html": "file:../deps/phoenix_html",
+        "phoenix_live_view": "file:../deps/phoenix_live_view"
+      }
+    }
+    ```
+
+    Install the JavaScript dependencies:
+
+    ```bash
+    cd assets && npm install
+    ```
+  </Step>
+
+  <Step title="Configure the JavaScript client">
+    Update your `assets/js/app.js` to connect to the LiveView socket:
+
+    ```javascript
+    // Import Phoenix and LiveView
+    import {Socket} from "phoenix"
+    import {LiveSocket} from "phoenix_live_view"
+
+    // Get the CSRF token from the page meta tag
+    let csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
+
+    // Create and connect the LiveSocket
+    let liveSocket = new LiveSocket("/live", Socket, {
+      params: {_csrf_token: csrfToken}
+    })
+
+    // Connect if there are any LiveViews on the page
+    liveSocket.connect()
+
+    // Expose liveSocket for web console debugging
+    window.liveSocket = liveSocket
+    ```
+  </Step>
+
+  <Step title="Add CSRF meta tag">
+    Ensure your root layout (`lib/my_app_web/templates/layout/root.html.heex` or similar) includes the CSRF meta tag in the `<head>`:
+
+    ```html
+    <meta name="csrf-token" content={get_csrf_token()} />
+    ```
+
+    This is required for LiveView to authenticate connections.
+  </Step>
+
+  <Step title="Enable LiveView Flash">
+    Update your app layout to support LiveView flash messages. In your main layout template, add:
+
+    ```heex
+    <.flash_group flash={@flash} />
+    ```
+
+    Or if using a simpler setup:
+
+    ```heex
+    <%= if live_flash(@flash, :info) do %>
+      <p class="alert alert-info" role="alert"><%= live_flash(@flash, :info) %></p>
+    <% end %>
+    <%= if live_flash(@flash, :error) do %>
+      <p class="alert alert-danger" role="alert"><%= live_flash(@flash, :error) %></p>
+    <% end %>
+    ```
+  </Step>
+</Steps>
+
+## Verify installation
+
+Test your LiveView installation by creating a simple LiveView:
+
+<CodeGroup>
+```elixir lib/my_app_web/live/hello_live.ex
+defmodule MyAppWeb.HelloLive do
+  use MyAppWeb, :live_view
+
+  def render(assigns) do
+    ~H"""
+    <div>
+      <h1>Hello LiveView!</h1>
+      <p>Count: {@count}</p>
+      <button phx-click="increment">+</button>
+    </div>
+    """
+  end
+
+  def mount(_params, _session, socket) do
+    {:ok, assign(socket, count: 0)}
+  end
+
+  def handle_event("increment", _params, socket) do
+    {:noreply, update(socket, :count, &(&1 + 1))}
+  end
+end
+```
+
+```elixir lib/my_app_web/router.ex
+scope "/", MyAppWeb do
+  pipe_through :browser
+
+  live "/hello", HelloLive
+end
+```
+</CodeGroup>
+
+Start your server with `mix phx.server` and visit `http://localhost:4000/hello`. If you see the counter and can increment it, LiveView is working!
+
+## Optional: Add LiveView helpers
+
+For a better development experience, add these helpers to your `lib/my_app_web.ex` file:
+
+```elixir
+def live_view do
+  quote do
+    use Phoenix.LiveView,
+      layout: {MyAppWeb.Layouts, :app}
+
+    unquote(html_helpers())
+  end
+end
+
+def live_component do
+  quote do
+    use Phoenix.LiveComponent
+
+    unquote(html_helpers())
+  end
+end
+```
+
+Then in your LiveViews, you can use:
+
+```elixir
+defmodule MyAppWeb.SomeLive do
+  use MyAppWeb, :live_view
+  # ...
+end
+```
+
+## Troubleshooting
+
+<Warning>
+  If you see "LiveView not found" or connection errors, check that:
+  - The LiveView socket is configured in your endpoint
+  - The JavaScript client is properly connected in `app.js`
+  - The CSRF token meta tag is present in your layout
+  - WebSocket connections aren't blocked by your firewall or proxy
+</Warning>
+
+### Common issues
+
+**WebSocket connection fails**: Ensure your endpoint is configured to handle WebSocket upgrades. Check your web server configuration if using a reverse proxy.
+
+**"Unauthorized" errors**: Verify the CSRF token is correctly passed from the meta tag to the LiveSocket configuration.
+
+**LiveView not updating**: Make sure you're returning the updated socket from your event handlers with `{:noreply, socket}`.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart tutorial" icon="rocket" href="/quickstart">
+    Build your first interactive LiveView
+  </Card>
+  
+  <Card title="Assigns and HEEx" icon="code" href="/assigns-eex">
+    Learn about templates and data binding
+  </Card>
+  
+  <Card title="Form bindings" icon="file-lines" href="/form-bindings">
+    Build forms with live validation
+  </Card>
+  
+  <Card title="Generators" icon="wand-magic-sparkles" href="https://hexdocs.pm/phoenix/Mix.Tasks.Phx.Gen.Live.html">
+    Use Phoenix generators for LiveView
+  </Card>
+</CardGroup>

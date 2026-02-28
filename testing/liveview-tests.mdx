@@ -1,0 +1,557 @@
+---
+title: Testing LiveViews
+description: Learn how to test LiveView mounting, events, navigation, and async operations
+---
+
+This guide covers testing full LiveView modules, including mounting, event handling, navigation, and async operations.
+
+## Mounting LiveViews
+
+### Basic Mount
+
+Use `live/2` to mount a LiveView and get the rendered HTML:
+
+```elixir
+test "mounts and renders", %{conn: conn} do
+  {:ok, view, html} = live(conn, "/thermo")
+  
+  assert html =~ "The temp is: 1"
+  assert view.module == MyAppWeb.ThermoLive
+end
+```
+
+The `live/2` macro returns:
+- `{:ok, view, html}` - Successfully mounted view and initial HTML
+- `{:error, {:redirect, %{to: path}}}` - LiveView redirected during mount
+- `{:error, {:live_redirect, %{to: path}}}` - LiveView live-redirected during mount
+
+### Testing Mount with Redirects
+
+Some LiveViews redirect during mount:
+
+```elixir
+test "redirects when unauthorized", %{conn: conn} do
+  assert {:error, {:redirect, %{to: "/login"}}} = live(conn, "/admin")
+end
+```
+
+### Disconnected and Connected Mounts
+
+Test both lifecycle phases:
+
+```elixir
+test "disconnected and connected mount", %{conn: conn} do
+  # Disconnected mount (HTTP GET)
+  conn = get(conn, "/thermo")
+  assert html_response(conn, 200) =~ "The temp is: 0"
+  
+  # Connected mount (WebSocket)
+  {:ok, view, html} = live(conn)
+  assert html =~ "The temp is: 1"
+end
+```
+
+### Mount with Session and Params
+
+Pass session data and connection parameters:
+
+```elixir
+test "mounts with session", %{conn: conn} do
+  conn = 
+    conn
+    |> Plug.Test.init_test_session(%{user_id: 123})
+    |> put_connect_params(%{"token" => "abc"})
+  
+  {:ok, view, html} = live(conn, "/dashboard")
+  assert html =~ "User: 123"
+end
+```
+
+<Note>
+Use `put_connect_params/2` to set parameters available via `get_connect_params/1` in your LiveView's mount callback.
+</Note>
+
+## Testing Events
+
+LiveView provides functions to test all phx-* event bindings.
+
+### Click Events
+
+Test `phx-click` events by finding elements:
+
+```elixir
+test "handles click events", %{conn: conn} do
+  {:ok, view, _html} = live(conn, "/thermo")
+  
+  # Click by finding element with text
+  assert view
+         |> element("button", "Increment")
+         |> render_click() =~ "The temp is: 2"
+  
+  # Click by ID
+  assert view
+         |> element("#dec-button")
+         |> render_click() =~ "The temp is: 1"
+end
+```
+
+You can also trigger events directly:
+
+```elixir
+test "triggers click event directly", %{conn: conn} do
+  {:ok, view, _html} = live(conn, "/thermo")
+  
+  assert render_click(view, :inc, %{}) =~ "The temp is: 2"
+end
+```
+
+<Tip>
+Prefer using `element/3` over direct event calls, as it validates that the element and event actually exist in your rendered HTML.
+</Tip>
+
+### Form Events
+
+#### Form Change Events
+
+Test `phx-change` validation:
+
+```elixir
+test "validates form on change", %{conn: conn} do
+  {:ok, view, _html} = live(conn, "/users/new")
+  
+  # Test validation errors
+  assert view
+         |> form("#user-form", user: %{name: ""})
+         |> render_change() =~ "can&#39;t be blank"
+  
+  # Test valid input
+  refute view
+         |> form("#user-form", user: %{name: "Alice"})
+         |> render_change() =~ "can&#39;t be blank"
+end
+```
+
+#### Form Submit Events
+
+Test `phx-submit` form submissions:
+
+```elixir
+test "submits form", %{conn: conn} do
+  {:ok, view, _html} = live(conn, "/users/new")
+  
+  assert view
+         |> form("#user-form", user: %{name: "Alice", email: "alice@example.com"})
+         |> render_submit() =~ "User created successfully"
+end
+```
+
+#### Hidden Form Fields
+
+For hidden fields not in the form data, pass them to `render_submit/2`:
+
+```elixir
+test "submits with hidden fields", %{conn: conn} do
+  {:ok, view, _html} = live(conn, "/users/new")
+  
+  assert view
+         |> form("#user-form", user: %{name: "Alice"})
+         |> render_submit(%{user: %{"hidden_token" => "secret"}}) =~ "Success"
+end
+```
+
+<Note>
+**Anti-pattern**: Don't pass regular input field values to `render_submit/2`. Always pass visible fields through `form/3` to ensure they exist in your template. Only use the value parameter for hidden fields.
+</Note>
+
+#### Form Submit Button
+
+Test specific submit buttons with `put_submitter/2`:
+
+```elixir
+test "submits with specific button", %{conn: conn} do
+  {:ok, view, _html} = live(conn, "/posts/1/edit")
+  
+  # Click "Save Draft" button
+  assert view
+         |> form("#post-form", post: %{title: "Draft"})
+         |> put_submitter("button[name=action][value=draft]")
+         |> render_submit() =~ "Draft saved"
+  
+  # Click "Publish" button
+  assert view
+         |> form("#post-form", post: %{title: "Published"})
+         |> put_submitter("button[name=action][value=publish]")
+         |> render_submit() =~ "Post published"
+end
+```
+
+### Keyboard Events
+
+Test `phx-keydown`, `phx-keyup`, and `phx-window-keydown` events:
+
+```elixir
+test "handles keyboard events", %{conn: conn} do
+  {:ok, view, _html} = live(conn, "/thermo")
+  
+  # Keyup event
+  assert view
+         |> element("#temp-input")
+         |> render_keyup(%{"key" => "ArrowUp"}) =~ "The temp is: 2"
+  
+  # Keydown event
+  assert render_keydown(view, :key, %{"key" => "ArrowDown"}) =~ "The temp is: 1"
+end
+```
+
+### Focus and Blur Events
+
+Test `phx-focus` and `phx-blur` events:
+
+```elixir
+test "handles focus events", %{conn: conn} do
+  {:ok, view, _html} = live(conn, "/search")
+  
+  # Focus input
+  assert view
+         |> element("#search-input")
+         |> render_focus() =~ "Search active"
+  
+  # Blur input
+  assert view
+         |> element("#search-input")
+         |> render_blur() =~ "Search inactive"
+end
+```
+
+### Hook Events
+
+Test events from JavaScript hooks with `render_hook/3`:
+
+```elixir
+test "handles hook events", %{conn: conn} do
+  {:ok, view, _html} = live(conn, "/canvas")
+  
+  assert render_hook(view, :draw, %{x: 10, y: 20}) =~ "Drawing"
+end
+```
+
+For hooks targeting components:
+
+```elixir
+test "hook event to component", %{conn: conn} do
+  {:ok, view, _html} = live(conn, "/editor")
+  
+  assert view
+         |> element("#editor-component")
+         |> render_hook(:save, %{content: "Hello"}) =~ "Saved"
+end
+```
+
+## Testing Navigation
+
+### Live Patch
+
+Test `push_patch` navigation within the same LiveView:
+
+```elixir
+test "patches to different tab", %{conn: conn} do
+  {:ok, view, _html} = live(conn, "/users")
+  
+  # Trigger patch
+  view
+  |> element("a", "Settings")
+  |> render_click()
+  
+  # Assert patch happened
+  assert_patch view, "/users?tab=settings"
+end
+```
+
+Or manually patch:
+
+```elixir
+test "manually patches view", %{conn: conn} do
+  {:ok, view, _html} = live(conn, "/users")
+  
+  assert render_patch(view, "/users?page=2") =~ "Page 2"
+end
+```
+
+### Live Navigation
+
+Test `push_navigate` to different LiveViews:
+
+```elixir
+test "navigates to different LiveView", %{conn: conn} do
+  {:ok, view, _html} = live(conn, "/posts")
+  
+  # Click navigate link
+  result = view
+           |> element("a", "New Post")
+           |> render_click()
+  
+  # Follow the redirect
+  assert {:error, {:live_redirect, %{to: "/posts/new"}}} = result
+  
+  {:ok, new_view, html} = follow_redirect(result, conn)
+  assert html =~ "Create Post"
+end
+```
+
+### Regular Redirects
+
+Test `redirect/2` to non-LiveView pages:
+
+```elixir
+test "redirects to external page", %{conn: conn} do
+  {:ok, view, _html} = live(conn, "/dashboard")
+  
+  result = render_click(view, :logout)
+  
+  assert {:error, {:redirect, %{to: "/login"}}} = result
+  
+  {:ok, conn} = follow_redirect(result, conn)
+  assert html_response(conn, 200) =~ "Login"
+end
+```
+
+## Testing Messages
+
+LiveViews are GenServers and can receive messages:
+
+```elixir
+test "handles messages", %{conn: conn} do
+  {:ok, view, _html} = live(conn, "/thermo")
+  
+  # Send message to LiveView process
+  send(view.pid, {:set_temp, 50})
+  
+  # Assert the view updated
+  assert render(view) =~ "The temp is: 50"
+end
+```
+
+## Testing Async Operations
+
+Wait for `assign_async`, `start_async`, and `stream_async` operations:
+
+```elixir
+test "loads data asynchronously", %{conn: conn} do
+  {:ok, view, html} = live(conn, "/users")
+  
+  # Initial loading state
+  assert html =~ "Loading users..."
+  
+  # Wait for async operation to complete
+  assert render_async(view) =~ "Alice"
+  assert render_async(view) =~ "Bob"
+end
+```
+
+With custom timeout:
+
+```elixir
+test "waits for slow async operations", %{conn: conn} do
+  {:ok, view, _html} = live(conn, "/reports")
+  
+  # Wait up to 5 seconds
+  assert render_async(view, 5000) =~ "Report generated"
+end
+```
+
+## Testing Uploads
+
+Test file uploads with `file_input/4` and `render_upload/3`:
+
+```elixir
+test "uploads file", %{conn: conn} do
+  {:ok, view, _html} = live(conn, "/upload")
+  
+  # Create file input
+  avatar = file_input(view, "#upload-form", :avatar, [
+    %{
+      last_modified: 1_594_171_879_000,
+      name: "avatar.jpg",
+      content: File.read!("test/fixtures/avatar.jpg"),
+      size: 10_000,
+      type: "image/jpeg"
+    }
+  ])
+  
+  # Upload file
+  assert render_upload(avatar, "avatar.jpg") =~ "100%"
+  
+  # Submit form
+  assert view
+         |> form("#upload-form")
+         |> render_submit() =~ "File uploaded"
+end
+```
+
+### Chunked Uploads
+
+Test progressive upload:
+
+```elixir
+test "uploads file in chunks", %{conn: conn} do
+  {:ok, view, _html} = live(conn, "/upload")
+  
+  avatar = file_input(view, "#upload-form", :avatar, [%{...}])
+  
+  # Upload 50%
+  assert render_upload(avatar, "avatar.jpg", 50) =~ "50%"
+  
+  # Upload remaining 50%
+  assert render_upload(avatar, "avatar.jpg", 50) =~ "100%"
+end
+```
+
+## Element Selection
+
+The `element/3` function finds elements by CSS selector:
+
+```elixir
+# By ID
+element(view, "#submit-button")
+
+# By class and text
+element(view, "button.primary", "Save")
+
+# By attribute
+element(view, ~s{[data-user-id="123"]})
+
+# Complex selector
+element(view, "#user-list > li:first-child a")
+```
+
+### Text Filters
+
+Use text filters to narrow selection:
+
+```elixir
+# Exact text match (substring)
+element(view, "button", "Save")
+
+# Regex match
+element(view, "a", ~r/^Edit$/)
+
+# Avoid unintended matches
+element(view, "a", ~r/(?<!un)opened/)  # Matches "opened" but not "unopened"
+```
+
+<Tip>
+Add `data-test-id` attributes to elements that are hard to select with CSS alone:
+
+```heex
+<button data-test-id="save-draft">Save Draft</button>
+```
+
+Then select with:
+```elixir
+element(view, "[data-test-id='save-draft']")
+```
+</Tip>
+
+## Checking Element Existence
+
+Use `has_element?/1` and `has_element?/3`:
+
+```elixir
+test "shows and hides elements", %{conn: conn} do
+  {:ok, view, _html} = live(conn, "/users/1")
+  
+  assert has_element?(view, "#user-details")
+  
+  # Delete user
+  view
+  |> element("button", "Delete")
+  |> render_click()
+  
+  refute has_element?(view, "#user-details")
+end
+```
+
+## Rendering Views
+
+The `render/1` function returns the current HTML:
+
+```elixir
+test "renders current state", %{conn: conn} do
+  {:ok, view, _html} = live(conn, "/counter")
+  
+  current_html = render(view)
+  assert current_html =~ "Count: 0"
+end
+```
+
+Render a specific element:
+
+```elixir
+test "renders element content", %{conn: conn} do
+  {:ok, view, _html} = live(conn, "/users")
+  
+  user_list = view
+              |> element("#user-list")
+              |> render()
+  
+  assert user_list =~ "Alice"
+end
+```
+
+## Testing Page Title
+
+Assert on page title updates:
+
+```elixir
+test "updates page title", %{conn: conn} do
+  {:ok, view, _html} = live(conn, "/posts/1")
+  
+  render_click(view, :edit)
+  
+  assert page_title(view) =~ "Edit Post"
+end
+```
+
+## Testing Nested LiveViews
+
+Access child LiveViews with `live_children/1` and `find_live_child/2`:
+
+```elixir
+test "interacts with child LiveView", %{conn: conn} do
+  {:ok, parent, _html} = live(conn, "/dashboard")
+  
+  # Get all children
+  [clock, weather] = live_children(parent)
+  
+  # Or find specific child by ID
+  clock = find_live_child(parent, "clock")
+  
+  assert render_click(clock, :snooze) =~ "Snoozing"
+end
+```
+
+## Best Practices
+
+<Steps>
+
+### Use Element Selection
+
+Prefer `element/3` over direct event calls to validate your HTML structure.
+
+### Test User Workflows
+
+Test complete user journeys, not just individual functions.
+
+### Verify HTML Structure
+
+Assert on rendered HTML to ensure correct DOM structure and attributes.
+
+### Test Error Cases
+
+Test validation errors, failed operations, and error states.
+
+### Use Descriptive Selectors
+
+Add `data-test-id` attributes for complex or dynamic elements.
+
+</Steps>

@@ -1,0 +1,335 @@
+---
+title: Phoenix.LiveView.UploadConfig
+description: API reference for Phoenix.LiveView.UploadConfig module
+---
+
+The struct representing an upload configuration.
+
+## Overview
+
+The `Phoenix.LiveView.UploadConfig` module defines the configuration structure for file uploads in LiveView. It is created by `allow_upload/3` and manages upload entries, validation, and processing.
+
+## Type Definition
+
+```elixir
+@type t :: %Phoenix.LiveView.UploadConfig{
+  name: atom() | String.t(),
+  cid: :unregistered | nil | integer(),
+  client_key: String.t(),
+  max_entries: pos_integer(),
+  max_file_size: pos_integer(),
+  entries: list(),
+  entry_refs_to_pids: %{String.t() => pid() | :unregistered | :done},
+  entry_refs_to_metas: %{String.t() => map()},
+  accept: list() | :any,
+  acceptable_types: MapSet.t(),
+  acceptable_exts: MapSet.t(),
+  external: function() | false,
+  allowed?: boolean(),
+  errors: list(),
+  ref: String.t(),
+  auto_upload?: boolean(),
+  writer: function(),
+  progress_event: function() | nil
+}
+```
+
+## Struct Fields
+
+<ResponseField name="name" type="atom() | String.t()">
+  The upload name provided to `allow_upload/3`
+</ResponseField>
+
+<ResponseField name="ref" type="String.t()">
+  Unique reference for this upload configuration
+</ResponseField>
+
+<ResponseField name="entries" type="list(UploadEntry.t())">
+  List of upload entries (files)
+</ResponseField>
+
+<ResponseField name="max_entries" type="pos_integer()">
+  Maximum number of files allowed. Default: 1
+</ResponseField>
+
+<ResponseField name="max_file_size" type="pos_integer()">
+  Maximum file size in bytes. Default: 8,000,000 (8MB)
+</ResponseField>
+
+<ResponseField name="chunk_size" type="pos_integer()">
+  Size of chunks for upload streaming. Default: 64,000 bytes
+</ResponseField>
+
+<ResponseField name="chunk_timeout" type="pos_integer()">
+  Timeout for chunk uploads in milliseconds. Default: 10,000ms
+</ResponseField>
+
+<ResponseField name="accept" type="list() | :any">
+  List of accepted file types or `:any`. Examples: `[".jpg", ".png", "image/*"]`
+</ResponseField>
+
+<ResponseField name="acceptable_types" type="MapSet.t()">
+  Set of acceptable MIME types
+</ResponseField>
+
+<ResponseField name="acceptable_exts" type="MapSet.t()">
+  Set of acceptable file extensions
+</ResponseField>
+
+<ResponseField name="external" type="function() | false">
+  External upload function for third-party storage, or `false` for local uploads
+</ResponseField>
+
+<ResponseField name="allowed?" type="boolean()">
+  Whether the upload is currently allowed
+</ResponseField>
+
+<ResponseField name="errors" type="list()">
+  List of validation errors as `{ref, error}` tuples
+</ResponseField>
+
+<ResponseField name="auto_upload?" type="boolean()">
+  Whether files should be uploaded automatically. Default: false
+</ResponseField>
+
+<ResponseField name="progress_event" type="function() | nil">
+  Optional callback for upload progress updates
+</ResponseField>
+
+<ResponseField name="writer" type="function()">
+  Function that returns the writer module and options for handling uploads
+</ResponseField>
+
+## Error Types
+
+Upload validation can produce the following errors:
+
+<ResponseField name=":too_large" type="atom">
+  File exceeds `max_file_size`
+</ResponseField>
+
+<ResponseField name=":too_many_files" type="atom">
+  Number of files exceeds `max_entries`
+</ResponseField>
+
+<ResponseField name=":not_accepted" type="atom">
+  File type not in the `accept` list
+</ResponseField>
+
+<ResponseField name=":external_client_failure" type="atom">
+  Error during external upload
+</ResponseField>
+
+## Default Values
+
+```elixir
+@default_max_entries 1
+@default_max_file_size 8_000_000  # 8 MB
+@default_chunk_size 64_000        # 64 KB
+@default_chunk_timeout 10_000     # 10 seconds
+```
+
+## Usage
+
+The upload config is created with `allow_upload/3`:
+
+```elixir
+def mount(_params, _session, socket) do
+  socket = 
+    socket
+    |> allow_upload(:avatar,
+      accept: ~w(.jpg .jpeg .png),
+      max_entries: 1,
+      max_file_size: 5_000_000
+    )
+  
+  {:ok, socket}
+end
+```
+
+Access the config in your assigns:
+
+```elixir
+def render(assigns) do
+  ~H"""
+  <%= for entry <- @uploads.avatar.entries do %>
+    <div>
+      <%= entry.client_name %> - <%= entry.progress %>%
+    </div>
+  <% end %>
+  
+  <%= for err <- @uploads.avatar.errors do %>
+    <div class="error"><%= error_to_string(err) %></div>
+  <% end %>
+  """
+end
+```
+
+## Accept Formats
+
+The `:accept` option supports:
+
+### File Extensions
+
+Must start with a period and have a known MIME type:
+
+```elixir
+accept: ~w(.jpg .jpeg .png .gif)
+```
+
+### MIME Types
+
+```elixir
+accept: ["image/jpeg", "image/png"]
+```
+
+### MIME Type Wildcards
+
+```elixir
+accept: ["image/*", "video/*", "audio/*"]
+```
+
+### Any File Type
+
+```elixir
+accept: :any
+```
+
+## External Uploads
+
+For uploads to external storage (S3, GCS, etc.):
+
+```elixir
+def mount(_params, _session, socket) do
+  socket =
+    socket
+    |> allow_upload(:avatar,
+      accept: ~w(.jpg .jpeg .png),
+      max_entries: 1,
+      external: &presign_upload/2
+    )
+  
+  {:ok, socket}
+end
+
+defp presign_upload(entry, socket) do
+  {:ok, meta, socket} = 
+    Phoenix.LiveView.Upload.external_upload_meta(entry, socket)
+  
+  # Generate presigned URL for your storage service
+  presigned_url = MyApp.Storage.generate_presigned_url(entry, socket)
+  
+  {:ok, %{uploader: "S3", url: presigned_url}, socket}
+end
+```
+
+## Custom Writer
+
+Provide a custom writer for advanced upload handling:
+
+```elixir
+def mount(_params, _session, socket) do
+  socket =
+    socket
+    |> allow_upload(:avatar,
+      accept: :any,
+      writer: fn _name, _entry, _socket ->
+        {MyApp.CustomUploadWriter, [bucket: "uploads"]}
+      end
+    )
+  
+  {:ok, socket}
+end
+```
+
+## Progress Callback
+
+Track upload progress with a custom callback:
+
+```elixir
+def mount(_params, _session, socket) do
+  socket =
+    socket
+    |> allow_upload(:documents,
+      accept: ["application/pdf"],
+      progress: &handle_progress/3
+    )
+  
+  {:ok, socket}
+end
+
+defp handle_progress(:documents, entry, socket) do
+  if entry.done? do
+    # Upload complete
+    {:noreply, put_flash(socket, :info, "Upload complete!")}
+  else
+    # Still uploading
+    {:noreply, socket}
+  end
+end
+```
+
+## Auto Upload
+
+Enable automatic upload on file selection:
+
+```elixir
+def mount(_params, _session, socket) do
+  socket =
+    socket
+    |> allow_upload(:avatar,
+      accept: ~w(.jpg .jpeg .png),
+      auto_upload: true
+    )
+  
+  {:ok, socket}
+end
+```
+
+## Validation Example
+
+```elixir
+def error_to_string(:too_large), do: "File is too large"
+def error_to_string(:too_many_files), do: "You have selected too many files"
+def error_to_string(:not_accepted), do: "File type not accepted"
+
+def render(assigns) do
+  ~H"""
+  <form phx-change="validate" phx-submit="save">
+    <.live_file_input upload={@uploads.avatar} />
+    
+    <%= for entry <- @uploads.avatar.entries do %>
+      <div>
+        <progress value={entry.progress} max="100"><%= entry.progress %>%</progress>
+        <button type="button" phx-click="cancel-upload" phx-value-ref={entry.ref}>×</button>
+      </div>
+    <% end %>
+    
+    <%= for {_ref, error} <- @uploads.avatar.errors do %>
+      <p class="error"><%= error_to_string(error) %></p>
+    <% end %>
+    
+    <button type="submit">Upload</button>
+  </form>
+  """
+end
+
+def handle_event("validate", _params, socket) do
+  {:noreply, socket}
+end
+
+def handle_event("cancel-upload", %{"ref" => ref}, socket) do
+  {:noreply, cancel_upload(socket, :avatar, ref)}
+end
+
+def handle_event("save", _params, socket) do
+  uploaded_files =
+    consume_uploaded_entries(socket, :avatar, fn %{path: path}, entry ->
+      dest = Path.join("uploads", entry.client_name)
+      File.cp!(path, dest)
+      {:ok, ~p"/uploads/#{entry.client_name}"}
+    end)
+  
+  {:noreply, socket |> put_flash(:info, "Files uploaded!")}
+end
+```

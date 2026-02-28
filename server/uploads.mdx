@@ -1,0 +1,325 @@
+---
+title: "File Uploads"
+description: "Handle file uploads with progress tracking, drag-and-drop, and validation"
+---
+
+LiveView supports interactive file uploads with progress for both direct-to-server uploads and direct-to-cloud external uploads on the client.
+
+## Built-in Features
+
+- **Accept specification** - Define accepted file types, max number of entries, max file size, etc. When the client selects files, the file metadata is automatically validated against the specification.
+- **Reactive entries** - Uploads are populated in an `@uploads` assign in the socket. Entries automatically respond to progress, errors, cancellation, etc.
+- **Drag and drop** - Use the `phx-drop-target` attribute to enable drag-and-drop functionality.
+
+## Allow Uploads
+
+You enable an upload, typically on mount, via `allow_upload/3`.
+
+```elixir
+@impl Phoenix.LiveView
+def mount(_params, _session, socket) do
+  {:ok,
+   socket
+   |> assign(:uploaded_files, [])
+   |> allow_upload(:avatar, accept: ~w(.jpg .jpeg), max_entries: 2)}
+end
+```
+
+### Available Options
+
+The `allow_upload/3` function accepts these options:
+
+- `:accept` - List of accepted file extensions or MIME types
+- `:max_entries` - Maximum number of files (default: 1)
+- `:max_file_size` - Maximum file size in bytes (default: 8MB)
+- `:auto_upload` - Automatically upload when files are selected (default: false)
+- `:chunk_size` - Size of upload chunks in bytes
+- `:progress` - Custom progress callback
+- `:external` - Function for external upload configuration
+
+<Tip>
+Check the `allow_upload/3` documentation for a complete list of available options, including `auto_upload` for automatic uploads.
+</Tip>
+
+## Render Upload Elements
+
+### Basic Form
+
+Use the `Phoenix.Component.live_file_input/1` component to render a file input:
+
+```heex
+<form id="upload-form" phx-change="validate" phx-submit="save">
+  <.live_file_input upload={@uploads.avatar} />
+  <button type="submit">Upload</button>
+</form>
+```
+
+<Warning>
+You must bind `phx-submit` and `phx-change` on the form. The `phx-change` event is required for validation to be performed.
+</Warning>
+
+### Upload Entries
+
+Uploads are populated in an `@uploads` assign. Each allowed upload contains a list of entries with information about progress, client file info, errors, etc.
+
+```heex
+<!-- Use phx-drop-target with the upload ref to enable file drag and drop -->
+<section phx-drop-target={@uploads.avatar.ref}>
+  <!-- Render each avatar entry -->
+  <article :for={entry <- @uploads.avatar.entries} class="upload-entry">
+    <figure>
+      <.live_img_preview entry={entry} />
+      <figcaption>{entry.client_name}</figcaption>
+    </figure>
+
+    <!-- entry.progress updates automatically for in-flight entries -->
+    <progress value={entry.progress} max="100"> {entry.progress}% </progress>
+
+    <!-- Cancel button -->
+    <button
+      type="button"
+      phx-click="cancel-upload"
+      phx-value-ref={entry.ref}
+      aria-label="cancel"
+    >
+      &times;
+    </button>
+
+    <!-- Phoenix.Component.upload_errors/2 returns a list of error atoms -->
+    <p :for={err <- upload_errors(@uploads.avatar, entry)} class="alert alert-danger">
+      {error_to_string(err)}
+    </p>
+  </article>
+
+  <!-- Upload-level errors -->
+  <p :for={err <- upload_errors(@uploads.avatar)} class="alert alert-danger">
+    {error_to_string(err)}
+  </p>
+</section>
+```
+
+## Drag and Drop Styling
+
+Phoenix LiveView adds the `phx-drop-target-active` class to the drop target element when a user is dragging a file over it.
+
+### TailwindCSS Custom Variant
+
+Create a custom variant for styling during drag:
+
+```css
+/* assets/app.css */
+@custom-variant phx-drop-target-active (.phx-drop-target-active&, .phx-drop-target-active &);
+```
+
+Use it in your templates:
+
+```heex
+<section
+  phx-drop-target={@uploads.avatar.ref}
+  class="phx-drop-target-active:scale-105"
+>
+  <!-- Upload UI -->
+</section>
+```
+
+<Info>
+This variant can be used with [Tailwind's arbitrary state selectors](https://tailwindcss.com/docs/hover-focus-and-other-states) to style not just the element itself, but the entire page, sibling elements, parent elements, and more.
+</Info>
+
+## Entry Validation
+
+Validation occurs automatically based on conditions specified in `allow_upload/3`. You must implement at least a minimal `phx-change` callback:
+
+```elixir
+@impl Phoenix.LiveView
+def handle_event("validate", _params, socket) do
+  {:noreply, socket}
+end
+```
+
+### Error Handling
+
+Entries for files that don't match the spec will contain errors. Use helper functions to render friendly error messages:
+
+```elixir
+# Per-entry errors
+defp error_to_string(:too_large), do: "Too large"
+defp error_to_string(:not_accepted), do: "You have selected an unacceptable file type"
+
+# Upload-level errors
+defp error_to_string(:too_many_files), do: "You have selected too many files"
+```
+
+## Cancel an Entry
+
+Users can cancel upload entries programmatically or via user action:
+
+```elixir
+@impl Phoenix.LiveView
+def handle_event("cancel-upload", %{"ref" => ref}, socket) do
+  {:noreply, cancel_upload(socket, :avatar, ref)}
+end
+```
+
+## Consume Uploaded Entries
+
+When the user submits a form, the JavaScript client uploads the files first, then invokes the `phx-submit` callback.
+
+<Steps>
+  <Step title="Handle the submit event">
+    Implement the `phx-submit` callback to process uploaded files.
+  </Step>
+  <Step title="Consume the entries">
+    Use `consume_uploaded_entries/3` to process completed uploads.
+  </Step>
+  <Step title="Persist the data">
+    Save the upload data alongside your form data.
+  </Step>
+</Steps>
+
+### Basic Example
+
+```elixir
+@impl Phoenix.LiveView
+def handle_event("save", _params, socket) do
+  uploaded_files =
+    consume_uploaded_entries(socket, :avatar, fn %{path: path}, _entry ->
+      dest = Path.join(
+        Application.app_dir(:my_app, "priv/static/uploads"),
+        Path.basename(path)
+      )
+      # You will need to create `priv/static/uploads` for `File.cp!/2` to work.
+      File.cp!(path, dest)
+      {:ok, ~p"/uploads/#{Path.basename(dest)}"}
+    end)
+
+  {:noreply, update(socket, :uploaded_files, &(&1 ++ uploaded_files))}
+end
+```
+
+<Note>
+While client metadata cannot be trusted, max file size validations are enforced as each chunk is received when performing direct-to-server uploads.
+</Note>
+
+## Static Path Configuration
+
+To access your uploads (e.g., in an `<img />` tag), add the `uploads` directory to `static_paths/0`. In a vanilla Phoenix project, this is found in `lib/my_app_web.ex`:
+
+```elixir
+def static_paths, do: ~w(assets fonts images uploads favicon.ico robots.txt)
+```
+
+<Warning>
+**Development Considerations**
+
+In development, changes to `priv/static/uploads` will trigger `live_reload`, causing your app to reload in the browser. You can temporarily disable this by setting `code_reloader: false` in `config/dev.exs`.
+</Warning>
+
+## Production Considerations
+
+Storing files directly on the server has limitations in production:
+
+- If you're running multiple instances, the uploaded file will only be on one instance
+- Any request routed to another machine will fail
+
+<Info>
+For production, it's best to store uploads in:
+- A database (depending on size and contents)
+- A separate storage service (S3, Google Cloud Storage, etc.)
+- Use external uploads for direct-to-cloud uploads
+</Info>
+
+See the External uploads guide for details on implementing client-side, direct-to-cloud uploads.
+
+## Complete Example
+
+Here's a complete LiveView with upload functionality:
+
+```elixir
+# lib/my_app_web/live/upload_live.ex
+defmodule MyAppWeb.UploadLive do
+  use MyAppWeb, :live_view
+
+  @impl Phoenix.LiveView
+  def mount(_params, _session, socket) do
+    {:ok,
+     socket
+     |> assign(:uploaded_files, [])
+     |> allow_upload(:avatar, accept: ~w(.jpg .jpeg), max_entries: 2)}
+  end
+
+  @impl Phoenix.LiveView
+  def handle_event("validate", _params, socket) do
+    {:noreply, socket}
+  end
+
+  @impl Phoenix.LiveView
+  def handle_event("cancel-upload", %{"ref" => ref}, socket) do
+    {:noreply, cancel_upload(socket, :avatar, ref)}
+  end
+
+  @impl Phoenix.LiveView
+  def handle_event("save", _params, socket) do
+    uploaded_files =
+      consume_uploaded_entries(socket, :avatar, fn %{path: path}, _entry ->
+        dest = Path.join(
+          [:code.priv_dir(:my_app), "static", "uploads", Path.basename(path)]
+        )
+        File.cp!(path, dest)
+        {:ok, ~p"/uploads/#{Path.basename(dest)}"}
+      end)
+
+    {:noreply, update(socket, :uploaded_files, &(&1 ++ uploaded_files))}
+  end
+
+  defp error_to_string(:too_large), do: "Too large"
+  defp error_to_string(:too_many_files), do: "You have selected too many files"
+  defp error_to_string(:not_accepted), do: "You have selected an unacceptable file type"
+end
+```
+
+## API Reference
+
+### `allow_upload/3`
+
+Enables file uploads for a LiveView.
+
+```elixir
+allow_upload(socket, name, opts)
+```
+
+### `consume_uploaded_entries/3`
+
+Processes completed uploads.
+
+```elixir
+consume_uploaded_entries(socket, name, func)
+```
+
+The function receives `%{path: path}` and the entry, and should return `{:ok, value}` or `{:postpone, value}`.
+
+### `cancel_upload/3`
+
+Cancels an upload entry.
+
+```elixir
+cancel_upload(socket, name, entry_ref)
+```
+
+### `upload_errors/1` and `upload_errors/2`
+
+Returns error atoms for an upload or entry.
+
+```elixir
+upload_errors(@uploads.avatar)
+upload_errors(@uploads.avatar, entry)
+```
+
+## Best Practices
+
+1. **Validate on the server**: Never trust client-side validation alone
+2. **Set reasonable limits**: Configure `max_entries` and `max_file_size` appropriately
+3. **Handle errors gracefully**: Provide clear error messages to users
+4. **Use external uploads for production**: For scalability and reliability
+5. **Preview before upload**: Use `live_img_preview/1` to show image previews
+6. **Clean up temporary files**: Ensure temporary upload files are properly cleaned up

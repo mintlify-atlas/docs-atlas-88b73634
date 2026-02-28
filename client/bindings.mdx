@@ -1,0 +1,420 @@
+---
+title: "Bindings"
+description: "DOM element bindings for client-server interaction in Phoenix LiveView"
+---
+
+Phoenix LiveView supports DOM element bindings for client-server interaction. Bindings allow you to react to user events like clicks, form submissions, key presses, and more by sending events to the server.
+
+## Basic Usage
+
+To react to a click on a button, render the element with a `phx-click` binding:
+
+```heex
+<button phx-click="inc_temperature">+</button>
+```
+
+Then handle the event on the server with the `handle_event` callback:
+
+```elixir
+def handle_event("inc_temperature", _value, socket) do
+  {:ok, new_temp} = Thermostat.inc_temperature(socket.assigns.id)
+  {:noreply, assign(socket, :temperature, new_temp)}
+end
+```
+
+## Available Bindings
+
+| Binding | Attributes | Description |
+|---------|------------|-------------|
+| [Click Events](#click-events) | `phx-click`, `phx-click-away` | Handle click interactions |
+| [Form Events](/client/form-bindings) | `phx-change`, `phx-submit` | Handle form interactions |
+| [Focus Events](#focus-and-blur-events) | `phx-blur`, `phx-focus`, `phx-window-blur`, `phx-window-focus` | Handle focus state changes |
+| [Key Events](#key-events) | `phx-keydown`, `phx-keyup`, `phx-window-keydown`, `phx-window-keyup`, `phx-key` | Handle keyboard interactions |
+| [Scroll Events](#scroll-events) | `phx-viewport-top`, `phx-viewport-bottom` | Handle infinite scrolling |
+| [Rate Limiting](#rate-limiting) | `phx-debounce`, `phx-throttle` | Control event frequency |
+| [DOM Patching](#dom-patching) | `phx-update`, `phx-mounted`, `phx-remove` | Control DOM updates |
+| [Lifecycle Events](#lifecycle-events) | `phx-connected`, `phx-disconnected` | React to connection state |
+
+## Click Events
+
+The `phx-click` binding sends click events to the server. When a client event is pushed, the value sent to the server is chosen with the following priority:
+
+### Using JS.push with value option
+
+```heex
+<div phx-click={JS.push("inc", value: %{myvar1: @val1})}>
+  Click me
+</div>
+```
+
+### Using phx-value-* attributes
+
+```heex
+<div phx-click="inc" phx-value-myvar1="val1" phx-value-myvar2="val2">
+  Click me
+</div>
+```
+
+The server receives:
+
+```elixir
+def handle_event("inc", %{"myvar1" => "val1", "myvar2" => "val2"}, socket) do
+  # Handle event
+  {:noreply, socket}
+end
+```
+
+### Adding custom metadata
+
+You can capture additional client event data by configuring the `LiveSocket`:
+
+```javascript
+let liveSocket = new LiveSocket("/live", Socket, {
+  params: {_csrf_token: csrfToken},
+  metadata: {
+    click: (e, el) => {
+      return {
+        altKey: e.altKey,
+        clientX: e.clientX,
+        clientY: e.clientY
+      }
+    }
+  }
+})
+```
+
+### Click Away Events
+
+The `phx-click-away` event fires when a click occurs outside of the element:
+
+```heex
+<div id="dropdown" phx-click-away="hide_dropdown">
+  <!-- Dropdown content -->
+</div>
+```
+
+## Focus and Blur Events
+
+Handle focus and blur events on elements that emit such events:
+
+```heex
+<input name="email" phx-focus="myfocus" phx-blur="myblur"/>
+```
+
+### Window-level focus events
+
+Detect when the page receives or loses focus:
+
+```heex
+<div class="container"
+    phx-window-focus="page-active"
+    phx-window-blur="page-inactive"
+    phx-value-page="123">
+  <!-- Content -->
+</div>
+```
+
+<Note>
+Window-level events are useful for elements that cannot receive focus directly, such as divs without a tabindex.
+</Note>
+
+## Key Events
+
+Handle keyboard events with `phx-keydown` and `phx-keyup` bindings.
+
+### Basic key handling
+
+```heex
+<div id="thermostat" phx-window-keyup="update_temp">
+  Current temperature: {@temperature}
+</div>
+```
+
+```elixir
+def handle_event("update_temp", %{"key" => "ArrowUp"}, socket) do
+  {:ok, new_temp} = Thermostat.inc_temperature(socket.assigns.id)
+  {:noreply, assign(socket, :temperature, new_temp)}
+end
+
+def handle_event("update_temp", %{"key" => "ArrowDown"}, socket) do
+  {:ok, new_temp} = Thermostat.dec_temperature(socket.assigns.id)
+  {:noreply, assign(socket, :temperature, new_temp)}
+end
+
+def handle_event("update_temp", _, socket) do
+  {:noreply, socket}
+end
+```
+
+### Filtering specific keys
+
+Use `phx-key` to trigger events only for specific keys:
+
+```heex
+<div phx-window-keydown="trigger" phx-key="Escape">
+  Press Escape to trigger
+</div>
+```
+
+### Capturing additional key metadata
+
+```javascript
+let liveSocket = new LiveSocket("/live", Socket, {
+  params: {_csrf_token: csrfToken},
+  metadata: {
+    keydown: (e, el) => {
+      return {
+        key: e.key,
+        metaKey: e.metaKey,
+        repeat: e.repeat
+      }
+    }
+  }
+})
+```
+
+<Warning>
+- `phx-keyup` and `phx-keydown` are not supported on inputs. Use form bindings like `phx-change` instead.
+- Always provide a fallback catch-all handler, as browser features like autofill may trigger events without a `"key"` field.
+</Warning>
+
+## Rate Limiting
+
+All events can be rate-limited using `phx-debounce` and `phx-throttle` bindings (except `phx-blur`, which fires immediately).
+
+### Debouncing
+
+`phx-debounce` delays emitting the event until after user input has stopped:
+
+```heex
+<form id="my-form" phx-change="validate" phx-submit="save">
+  <input type="text" name="user[email]" phx-debounce="blur"/>
+  <input type="text" name="user[username]" phx-debounce="2000"/>
+</form>
+```
+
+<Tabs>
+  <Tab title="Integer value">
+    Delays event emission by the specified milliseconds. Default: `300ms`
+    
+    ```heex
+    <input phx-change="validate" phx-debounce="1000"/>
+    ```
+  </Tab>
+  <Tab title="blur value">
+    Delays event emission until the field is blurred
+    
+    ```heex
+    <input phx-change="validate" phx-debounce="blur"/>
+    ```
+  </Tab>
+</Tabs>
+
+### Throttling
+
+`phx-throttle` immediately emits the event, then rate limits subsequent events:
+
+```heex
+<button phx-click="volume_up" phx-throttle="1000">+</button>
+```
+
+```heex
+<div phx-window-keydown="keydown" phx-throttle="500">
+  <!-- Throttled keydown handling -->
+</div>
+```
+
+<Tip>
+Throttle defaults to `300ms` when no value is specified. Use throttle for clicks and continuous actions like held-down keys.
+</Tip>
+
+### Special Behavior
+
+- When `phx-submit` or a different input's `phx-change` triggers, debounce/throttle timers reset for existing inputs
+- `phx-keydown` is only throttled for key repeats—unique keypresses always dispatch immediately
+
+## DOM Patching
+
+Control how the DOM is updated using the `phx-update` attribute.
+
+### Update strategies
+
+<Tabs>
+  <Tab title="replace">
+    **Default operation.** Replaces the element with new contents.
+    
+    ```heex
+    <div id="content" phx-update="replace">
+      {@content}
+    </div>
+    ```
+  </Tab>
+  <Tab title="stream">
+    Supports stream operations for managing large collections.
+    
+    ```heex
+    <ul id="posts" phx-update="stream">
+      <li :for={{id, post} <- @streams.posts} id={id}>
+        <.post_card post={post} />
+      </li>
+    </ul>
+    ```
+    
+    See `Phoenix.LiveView.stream/3` for details.
+  </Tab>
+  <Tab title="ignore">
+    Ignores all updates except data attributes. Useful for client-side libraries.
+    
+    ```heex
+    <div id="chart" phx-update="ignore" phx-hook="Chart">
+      <!-- Managed by JS library -->
+    </div>
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+When using `phx-update`, a unique DOM ID must always be set on the container. For `stream` updates, each child element must also have a unique ID.
+</Warning>
+
+### Reacting to mount and removal
+
+```heex
+<!-- Animate on mount -->
+<div phx-mounted={JS.transition("animate-ping", time: 500)}>
+  New item!
+</div>
+
+<!-- Execute JS on removal -->
+<div phx-remove={JS.transition("fade-out")}>
+  Removable content
+</div>
+```
+
+<Note>
+`phx-mounted` executes at the earliest opportunity after connection. For elements in a LiveView, this is after the initial socket connection is established.
+</Note>
+
+## Scroll Events
+
+Implement infinite scrolling with `phx-viewport-top` and `phx-viewport-bottom`:
+
+```elixir
+def mount(_, _, socket) do
+  {:ok,
+    socket
+    |> assign(page: 1, per_page: 20)
+    |> paginate_posts(1)}
+end
+
+defp paginate_posts(socket, new_page) when new_page >= 1 do
+  %{per_page: per_page, page: cur_page} = socket.assigns
+  posts = Blog.list_posts(offset: (new_page - 1) * per_page, limit: per_page)
+
+  {posts, at, limit} =
+    if new_page >= cur_page do
+      {posts, -1, per_page * 3 * -1}
+    else
+      {Enum.reverse(posts), 0, per_page * 3}
+    end
+
+  case posts do
+    [] ->
+      assign(socket, end_of_timeline?: at == -1)
+
+    [_ | _] = posts ->
+      socket
+      |> assign(end_of_timeline?: false)
+      |> assign(:page, new_page)
+      |> stream(:posts, posts, at: at, limit: limit)
+  end
+end
+```
+
+```heex
+<ul
+  id="posts"
+  phx-update="stream"
+  phx-viewport-top={@page > 1 && JS.push("prev-page", page_loading: true)}
+  phx-viewport-bottom={!@end_of_timeline? && JS.push("next-page", page_loading: true)}
+  class={[
+    if(@end_of_timeline?, do: "pb-10", else: "pb-[calc(200vh)]"),
+    if(@page == 1, do: "pt-10", else: "pt-[calc(200vh)]")
+  ]}
+>
+  <li :for={{id, post} <- @streams.posts} id={id}>
+    <.post_card post={post} />
+  </li>
+</ul>
+```
+
+```elixir
+def handle_event("next-page", _, socket) do
+  {:noreply, paginate_posts(socket, socket.assigns.page + 1)}
+end
+
+def handle_event("prev-page", %{"_overran" => true}, socket) do
+  {:noreply, paginate_posts(socket, 1)}
+end
+
+def handle_event("prev-page", _, socket) do
+  if socket.assigns.page > 1 do
+    {:noreply, paginate_posts(socket, socket.assigns.page - 1)}
+  else
+    {:noreply, socket}
+  end
+end
+```
+
+<Tip>
+The `"_overran" => true` parameter is sent when the user scrolls past the viewport boundary, allowing you to reset to the first page.
+</Tip>
+
+## Lifecycle Events
+
+React to connection state changes with `phx-connected` and `phx-disconnected`:
+
+```heex
+<div id="status" class="hidden" 
+     phx-disconnected={JS.show()} 
+     phx-connected={JS.hide()}>
+  Attempting to reconnect...
+</div>
+```
+
+<Note>
+These bindings only execute inside a LiveView container. They have no effect in static templates.
+</Note>
+
+## LiveView Events
+
+The `lv:` prefix supports special LiveView features handled without calling `handle_event/3`:
+
+### Clearing flash messages
+
+```heex
+<p class="alert" phx-click="lv:clear-flash" phx-value-key="info">
+  {Phoenix.Flash.get(@flash, :info)}
+</p>
+```
+
+<Tip>
+If no `phx-value-key` is provided, all flash messages will be cleared.
+</Tip>
+
+## Testing
+
+Use `Phoenix.LiveViewTest.render_hook/3` to test viewport and other events:
+
+```elixir
+view
+|> element("#posts")
+|> render_hook("next-page")
+```
+
+## See Also
+
+- [Form Bindings](/client/form-bindings) - Form-specific event handling
+- [JS Commands](/client/js-commands) - Client-side JavaScript utilities
+- [JS Interop](/client/js-interop) - JavaScript integration and hooks
+- [Syncing Changes](/client/syncing-changes) - Optimistic UI updates

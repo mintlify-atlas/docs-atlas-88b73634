@@ -1,80 +1,199 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Build your first interactive LiveView in minutes with this step-by-step tutorial.
 ---
 
-## Get started in three steps
+This guide will walk you through creating a simple interactive thermostat using Phoenix LiveView. You'll learn the basics of LiveView by building a working application that responds to user input in real-time.
 
-Get your documentation site running locally and make your first customization.
+<Note>
+  This guide assumes you already have a Phoenix application set up. If you don't, check out the [Phoenix installation guide](https://hexdocs.pm/phoenix/installation.html) first. LiveView is included by default in Phoenix 1.6+.
+</Note>
 
-### Step 1: Set up your local environment
+## Build a thermostat
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+We'll create a simple thermostat that displays the current temperature and allows users to increase or decrease it.
 
-### Step 2: Deploy your changes
+<Steps>
+  <Step title="Create the LiveView module">
+    Create a new file at `lib/my_app_web/live/thermostat_live.ex` (replace `my_app_web` with your app's name):
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    ```elixir
+    defmodule MyAppWeb.ThermostatLive do
+      use MyAppWeb, :live_view
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+      def render(assigns) do
+        ~H"""
+        <div class="thermostat">
+          <h1>Thermostat</h1>
+          <p>Current temperature: {@temperature}°F</p>
+          <button phx-click="inc_temperature">+</button>
+        </div>
+        """
+      end
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+      def mount(_params, _session, socket) do
+        temperature = 70 # Starting temperature
+        {:ok, assign(socket, :temperature, temperature)}
+      end
 
-### Step 3: Go live
+      def handle_event("inc_temperature", _params, socket) do
+        {:noreply, update(socket, :temperature, &(&1 + 1))}
+      end
+    end
+    ```
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    This LiveView defines three essential callbacks:
+    - `render/1` receives the socket assigns and returns the HTML to display using the `~H` sigil (HEEx template)
+    - `mount/3` initializes the LiveView state when it first loads
+    - `handle_event/3` handles the button click event
+  </Step>
+
+  <Step title="Add the route">
+    Open your router file at `lib/my_app_web/router.ex` and add a live route:
+
+    ```elixir
+    defmodule MyAppWeb.Router do
+      use MyAppWeb, :router
+
+      pipeline :browser do
+        # ... existing pipeline config
+      end
+
+      scope "/", MyAppWeb do
+        pipe_through :browser
+
+        # Add this line:
+        live "/thermostat", ThermostatLive
+      end
+    end
+    ```
+
+    The `live` macro creates a route that serves your LiveView directly.
+  </Step>
+
+  <Step title="Start the server and test">
+    Start your Phoenix server:
+
+    ```bash
+    mix phx.server
+    ```
+
+    Visit `http://localhost:4000/thermostat` in your browser. You should see the thermostat with the current temperature and a `+` button. Click the button and watch the temperature increase in real-time!
+  </Step>
+
+  <Step title="Add a decrease button">
+    Let's make the thermostat more useful by adding a decrease button. Update the `render/1` function:
+
+    ```elixir
+    def render(assigns) do
+      ~H"""
+      <div class="thermostat">
+        <h1>Thermostat</h1>
+        <p>Current temperature: {@temperature}°F</p>
+        <div class="controls">
+          <button phx-click="dec_temperature">-</button>
+          <button phx-click="inc_temperature">+</button>
+        </div>
+      </div>
+      """
+    end
+    ```
+
+    Add the event handler:
+
+    ```elixir
+    def handle_event("dec_temperature", _params, socket) do
+      {:noreply, update(socket, :temperature, &(&1 - 1))}
+    end
+    ```
+
+    Refresh your browser and try both buttons. The temperature updates instantly!
+  </Step>
+</Steps>
+
+## How it works
+
+### The LiveView lifecycle
+
+1. **Initial HTTP request**: When you first visit `/thermostat`, Phoenix renders the LiveView as static HTML through a regular HTTP request. This ensures fast "First Meaningful Paint" and helps with SEO.
+
+2. **WebSocket connection**: After the page loads, the JavaScript client (automatically included in Phoenix apps) establishes a WebSocket connection to the server.
+
+3. **LiveView process**: A new LiveView process is spawned on the server. The `mount/3` callback runs again to initialize the state.
+
+4. **User interaction**: When you click a button, the client sends an event to the server over WebSocket. The `handle_event/3` callback processes it and updates the state.
+
+5. **Minimal updates**: LiveView calculates exactly what changed and sends only the diff to the client. The client efficiently patches the DOM.
+
+### Understanding the code
+
+**The `~H` sigil**: This is HEEx (HTML+EEx), LiveView's templating language. It provides:
+- HTML validation at compile time
+- Automatic XSS protection
+- Support for function components
+- Interpolation with `{@variable}` syntax
+
+**The `phx-click` binding**: This tells LiveView to send an event to the server when the element is clicked. LiveView supports many bindings: `phx-submit`, `phx-change`, `phx-focus`, `phx-blur`, and more.
+
+**The socket**: The socket holds all the state for your LiveView in its `assigns`. Functions like `assign/3` and `update/3` return a new socket with updated assigns. Because Elixir data is immutable, LiveView can efficiently track what changed.
+
+## Add temperature limits
+
+Let's make our thermostat more realistic by adding temperature limits and visual feedback:
+
+```elixir
+def render(assigns) do
+  ~H"""
+  <div class="thermostat">
+    <h1>Thermostat</h1>
+    <p class={temp_class(@temperature)}>
+      Current temperature: {@temperature}°F
+    </p>
+    <div class="controls">
+      <button phx-click="dec_temperature" disabled={@temperature <= 60}>-</button>
+      <button phx-click="inc_temperature" disabled={@temperature >= 80}>+</button>
+    </div>
+  </div>
+  """
+end
+
+def handle_event("inc_temperature", _params, socket) do
+  new_temp = min(socket.assigns.temperature + 1, 80)
+  {:noreply, assign(socket, :temperature, new_temp)}
+end
+
+def handle_event("dec_temperature", _params, socket) do
+  new_temp = max(socket.assigns.temperature - 1, 60)
+  {:noreply, assign(socket, :temperature, new_temp)}
+end
+
+defp temp_class(temp) when temp >= 75, do: "hot"
+defp temp_class(temp) when temp <= 65, do: "cold"
+defp temp_class(_temp), do: "comfortable"
+```
+
+Now the thermostat won't go below 60°F or above 80°F, and the temperature display will have different CSS classes based on the temperature.
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Assigns and HEEx" icon="code" href="/assigns-eex">
+    Learn more about templates and data binding
+  </Card>
+  
+  <Card title="Bindings" icon="link" href="/bindings">
+    Explore all available LiveView bindings
+  </Card>
+  
+  <Card title="Forms" icon="file-lines" href="/form-bindings">
+    Build forms with live validation
+  </Card>
+  
+  <Card title="Components" icon="cubes" href="https://hexdocs.pm/phoenix_live_view/Phoenix.Component.html">
+    Create reusable function components
+  </Card>
 </CardGroup>
 
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
+<Tip>
+  Want to see more examples? Run `mix phx.gen.live` to generate a complete LiveView CRUD interface with database integration.
+</Tip>

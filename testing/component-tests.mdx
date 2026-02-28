@@ -1,0 +1,585 @@
+---
+title: Testing Components
+description: Learn how to test function components and LiveComponents
+---
+
+Phoenix LiveView provides different approaches for testing function components and LiveComponents, from simple unit tests to full integration tests.
+
+## Testing Function Components
+
+Function components are pure functions that return HEEx templates. There are two main approaches to testing them.
+
+### Using render_component/3
+
+The `render_component/3` function renders a component and returns its HTML:
+
+```elixir
+defmodule MyAppWeb.ComponentsTest do
+  use ExUnit.Case, async: true
+  
+  import Phoenix.LiveViewTest
+  
+  test "greets user" do
+    assert render_component(&MyComponents.greet/1, name: "Mary") ==
+             "<div>Hello, Mary!</div>"
+  end
+end
+```
+
+### Using rendered_to_string/1
+
+For complex components, use the `~H` sigil with `rendered_to_string/1`:
+
+```elixir
+defmodule MyAppWeb.ComponentsTest do
+  use ExUnit.Case, async: true
+  
+  import Phoenix.Component
+  import Phoenix.LiveViewTest
+  
+  test "greets user with HEEx" do
+    assigns = %{}
+    
+    assert rendered_to_string(~H"""
+           <MyComponents.greet name="Mary" />
+           """) == "<div>Hello, Mary!</div>"
+  end
+end
+```
+
+<Tip>
+Use `rendered_to_string/1` when you need to compose multiple components or test components with slots and complex structures.
+</Tip>
+
+## Testing Function Components with Props
+
+Test components with various prop types:
+
+```elixir
+test "renders user card" do
+  user = %{name: "Alice", email: "alice@example.com", avatar: "/images/alice.jpg"}
+  
+  html = render_component(&MyComponents.user_card/1, user: user, size: :large)
+  
+  assert html =~ "Alice"
+  assert html =~ "alice@example.com"
+  assert html =~ "src=\"/images/alice.jpg\""
+  assert html =~ "class=\"user-card-large\""
+end
+```
+
+### Testing Components with Slots
+
+Test components that accept slots:
+
+```elixir
+test "renders card with header and footer slots" do
+  assigns = %{}
+  
+  html = rendered_to_string(~H"""
+  <MyComponents.card>
+    <:header>
+      <h2>Title</h2>
+    </:header>
+    
+    <p>Card content</p>
+    
+    <:footer>
+      <button>Action</button>
+    </:footer>
+  </MyComponents.card>
+  """)
+  
+  assert html =~ "<h2>Title</h2>"
+  assert html =~ "<p>Card content</p>"
+  assert html =~ "<button>Action</button>"
+end
+```
+
+### Testing Dynamic Attributes
+
+Test components that use `@rest` or dynamic attributes:
+
+```elixir
+test "forwards attributes to element" do
+  html = render_component(
+    &MyComponents.button/1,
+    class: "btn-primary",
+    disabled: true,
+    data_test_id: "submit-button"
+  )
+  
+  assert html =~ ~s(class="btn-primary")
+  assert html =~ ~s(disabled)
+  assert html =~ ~s(data-test-id="submit-button")
+end
+```
+
+## Testing LiveComponents
+
+LiveComponents are stateful components that can handle events. You can test them in isolation or within a parent LiveView.
+
+### Testing LiveComponent Rendering
+
+Use `render_component/3` to test a LiveComponent's initial render:
+
+```elixir
+test "renders counter component" do
+  assert render_component(MyAppWeb.CounterComponent, id: 1, initial_count: 5) =~
+           "Count: 5"
+end
+```
+
+<Note>
+The `:id` option is required when testing LiveComponents, as they must be uniquely identified.
+</Note>
+
+### Testing LiveComponent with Router
+
+If your component uses the router, pass it as an option:
+
+```elixir
+@endpoint MyAppWeb.Endpoint
+
+test "renders component with router" do
+  assert render_component(
+    MyAppWeb.NavComponent,
+    %{id: 1, current_path: "/users"},
+    router: MyAppWeb.Router
+  ) =~ "active"
+end
+```
+
+### Testing LiveComponent Events
+
+To test events, mount the LiveComponent within a LiveView:
+
+```elixir
+test "handles increment event", %{conn: conn} do
+  {:ok, view, html} = live(conn, "/counter")
+  
+  assert html =~ "Count: 0"
+  
+  # Target component by element with ID
+  assert view
+         |> element("#counter-1 button", "Increment")
+         |> render_click() =~ "Count: 1"
+end
+```
+
+LiveView automatically targets the component based on `phx-target`:
+
+```heex
+<!-- In your template -->
+<.live_component module={CounterComponent} id="counter-1" />
+
+<!-- CounterComponent renders -->
+<div id="counter-1" phx-target={@myself}>
+  <p>Count: {@count}</p>
+  <button phx-click="increment">Increment</button>
+</div>
+```
+
+### Testing Multiple LiveComponents
+
+Test interactions with multiple instances:
+
+```elixir
+test "manages multiple counter components", %{conn: conn} do
+  {:ok, view, _html} = live(conn, "/counters")
+  
+  # Increment first counter
+  assert view
+         |> element("#counter-1 button", "+")
+         |> render_click() =~ "Counter 1: 1"
+  
+  # Increment second counter twice
+  view
+  |> element("#counter-2 button", "+")
+  |> render_click()
+  
+  assert view
+         |> element("#counter-2 button", "+")
+         |> render_click() =~ "Counter 2: 2"
+  
+  # First counter unchanged
+  assert render(view) =~ "Counter 1: 1"
+end
+```
+
+## Testing Component Lifecycle
+
+Test LiveComponent lifecycle callbacks:
+
+### Testing mount/1
+
+```elixir
+test "initializes state in mount" do
+  html = render_component(
+    MyAppWeb.TimerComponent,
+    id: 1,
+    duration: 60
+  )
+  
+  assert html =~ "Time remaining: 60s"
+end
+```
+
+### Testing update/2
+
+Test how components respond to prop changes:
+
+```elixir
+test "updates when props change", %{conn: conn} do
+  {:ok, view, _html} = live(conn, "/dashboard")
+  
+  # Component shows initial user
+  assert render(view) =~ "User: Alice"
+  
+  # Parent updates the user prop
+  send(view.pid, {:update_user, "Bob"})
+  
+  # Component re-renders with new user
+  assert render(view) =~ "User: Bob"
+end
+```
+
+### Testing handle_event/3
+
+Test event handlers in components:
+
+```elixir
+test "deletes user on click", %{conn: conn} do
+  {:ok, view, html} = live(conn, "/users")
+  
+  assert html =~ "user-13"
+  
+  # Click delete in user component
+  html = view
+         |> element("#user-13 a", "Delete")
+         |> render_click()
+  
+  refute html =~ "user-13"
+  refute has_element?(view, "#user-13")
+end
+```
+
+## Testing Component Composition
+
+Test components that render other components:
+
+```elixir
+test "renders nested components" do
+  assigns = %{users: [
+    %{id: 1, name: "Alice"},
+    %{id: 2, name: "Bob"}
+  ]}
+  
+  html = rendered_to_string(~H"""
+  <MyComponents.user_list users={@users}>
+    <:empty>No users found</:empty>
+  </MyComponents.user_list>
+  """)
+  
+  assert html =~ "Alice"
+  assert html =~ "Bob"
+  refute html =~ "No users found"
+end
+
+test "renders empty state" do
+  assigns = %{users: []}
+  
+  html = rendered_to_string(~H"""
+  <MyComponents.user_list users={@users}>
+    <:empty>No users found</:empty>
+  </MyComponents.user_list>
+  """)
+  
+  assert html =~ "No users found"
+end
+```
+
+## Testing Component Slots
+
+### Named Slots
+
+Test components with multiple named slots:
+
+```elixir
+test "renders modal with slots" do
+  assigns = %{}
+  
+  html = rendered_to_string(~H"""
+  <MyComponents.modal id="confirm-modal">
+    <:title>Confirm Action</:title>
+    
+    <:body>
+      <p>Are you sure?</p>
+    </:body>
+    
+    <:footer>
+      <button>Cancel</button>
+      <button>Confirm</button>
+    </:footer>
+  </MyComponents.modal>
+  """)
+  
+  assert html =~ "Confirm Action"
+  assert html =~ "Are you sure?"
+  assert html =~ "Cancel"
+  assert html =~ "Confirm"
+end
+```
+
+### Default Slot
+
+Test the default inner block:
+
+```elixir
+test "renders default slot" do
+  assigns = %{}
+  
+  html = rendered_to_string(~H"""
+  <MyComponents.container>
+    <h1>Content</h1>
+    <p>Inner content</p>
+  </MyComponents.container>
+  """)
+  
+  assert html =~ "<h1>Content</h1>"
+  assert html =~ "<p>Inner content</p>"
+end
+```
+
+### Slot Attributes
+
+Test slots that expose attributes:
+
+```elixir
+test "renders list with item slot" do
+  assigns = %{
+    items: [
+      %{id: 1, name: "Apple", price: 1.99},
+      %{id: 2, name: "Banana", price: 0.99}
+    ]
+  }
+  
+  html = rendered_to_string(~H"""
+  <MyComponents.list items={@items}>
+    <:item :let={item}>
+      <span>{item.name}: ${item.price}</span>
+    </:item>
+  </MyComponents.list>
+  """)
+  
+  assert html =~ "Apple: $1.99"
+  assert html =~ "Banana: $0.99"
+end
+```
+
+## Testing Component Forms
+
+Test form components:
+
+```elixir
+test "renders form component" do
+  changeset = User.changeset(%User{}, %{})
+  
+  html = render_component(
+    &MyComponents.user_form/1,
+    form: to_form(changeset),
+    action: "/users"
+  )
+  
+  assert html =~ ~s(action="/users")
+  assert html =~ ~s(name="user[name]")
+  assert html =~ ~s(name="user[email]")
+end
+
+test "shows validation errors" do
+  changeset = 
+    %User{}
+    |> User.changeset(%{name: ""})
+    |> Map.put(:action, :validate)
+  
+  html = render_component(
+    &MyComponents.user_form/1,
+    form: to_form(changeset),
+    action: "/users"
+  )
+  
+  assert html =~ "can&#39;t be blank"
+end
+```
+
+## Testing CoreComponents
+
+Test Phoenix's built-in core components:
+
+```elixir
+import MyAppWeb.CoreComponents
+
+test "renders button" do
+  assigns = %{}
+  
+  html = rendered_to_string(~H"""
+  <.button type="submit" class="primary">
+    Save Changes
+  </.button>
+  """)
+  
+  assert html =~ ~s(type="submit")
+  assert html =~ ~s(class="primary")
+  assert html =~ "Save Changes"
+end
+
+test "renders input with errors" do
+  assigns = %{}
+  
+  html = rendered_to_string(~H"""
+  <.input
+    name="user[email]"
+    type="email"
+    value=""
+    errors={["can't be blank"]}
+  />
+  """)
+  
+  assert html =~ ~s(name="user[email]")
+  assert html =~ "can&#39;t be blank"
+end
+```
+
+## Testing Component Links
+
+Test components with navigation:
+
+```elixir
+test "renders navigation links" do
+  assigns = %{current_path: "/users"}
+  
+  html = rendered_to_string(~H"""
+  <MyComponents.nav current_path={@current_path}>
+    <:link path="/users">Users</:link>
+    <:link path="/posts">Posts</:link>
+  </MyComponents.nav>
+  """)
+  
+  # Current link is active
+  assert html =~ ~r(<a[^>]*class="[^"]*active[^"]*"[^>]*>Users</a>)
+  
+  # Other link is not active
+  refute html =~ ~r(<a[^>]*href="/posts"[^>]*class="[^"]*active)
+end
+```
+
+## Testing Conditional Rendering
+
+Test components with conditional logic:
+
+```elixir
+test "shows loading state" do
+  html = render_component(&MyComponents.user_profile/1, user: nil, loading: true)
+  
+  assert html =~ "Loading..."
+  refute html =~ "Email:"
+end
+
+test "shows user data when loaded" do
+  user = %{name: "Alice", email: "alice@example.com"}
+  html = render_component(&MyComponents.user_profile/1, user: user, loading: false)
+  
+  refute html =~ "Loading..."
+  assert html =~ "Alice"
+  assert html =~ "alice@example.com"
+end
+```
+
+## Testing Component Accessibility
+
+Test ARIA attributes and accessibility features:
+
+```elixir
+test "includes proper ARIA attributes" do
+  html = render_component(
+    &MyComponents.alert/1,
+    type: :error,
+    message: "Something went wrong"
+  )
+  
+  assert html =~ ~s(role="alert")
+  assert html =~ ~s(aria-live="polite")
+  assert html =~ "Something went wrong"
+end
+```
+
+## Best Practices
+
+<Steps>
+
+### Test Component Contracts
+
+Test that components accept and render the props they're designed for.
+
+### Test Edge Cases
+
+Test empty states, nil values, and boundary conditions.
+
+### Use rendered_to_string for Integration
+
+When testing how components work together, use `rendered_to_string/1`.
+
+### Test Accessibility
+
+Verify ARIA attributes, roles, and semantic HTML.
+
+### Keep Tests Focused
+
+Test one aspect per test case for clarity and maintainability.
+
+</Steps>
+
+## Common Testing Patterns
+
+### Setup Helpers
+
+Create helpers for common test data:
+
+```elixir
+defmodule MyAppWeb.ComponentsTest do
+  use ExUnit.Case, async: true
+  
+  import Phoenix.Component
+  import Phoenix.LiveViewTest
+  
+  defp user_fixture(attrs \\ %{}) do
+    Enum.into(attrs, %{
+      id: 1,
+      name: "Test User",
+      email: "test@example.com"
+    })
+  end
+  
+  test "renders user card" do
+    user = user_fixture(name: "Alice")
+    html = render_component(&MyComponents.user_card/1, user: user)
+    
+    assert html =~ "Alice"
+  end
+end
+```
+
+### Assert Macros
+
+Create custom assertions for common checks:
+
+```elixir
+defp assert_has_css_class(html, class) do
+  assert html =~ ~r/class="[^"]*#{class}[^"]*"/
+end
+
+test "applies error class" do
+  html = render_component(&MyComponents.input/1, errors: ["invalid"])
+  assert_has_css_class(html, "input-error")
+end
+```

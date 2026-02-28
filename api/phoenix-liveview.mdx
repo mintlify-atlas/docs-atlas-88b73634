@@ -1,0 +1,581 @@
+---
+title: Phoenix.LiveView
+description: Main LiveView module API reference
+---
+
+## Overview
+
+A LiveView is a process that receives events, updates its state, and renders updates to a page as diffs.
+
+LiveView begins as a regular HTTP request and HTML response, and then upgrades to a stateful view on client connect, guaranteeing a regular HTML page even if JavaScript is disabled. Socket assigns are stateful values kept on the server side.
+
+## Life-cycle
+
+The LiveView life-cycle follows this sequence:
+
+1. `mount/3` - Invoked on both initial HTTP render and WebSocket connection
+2. `handle_params/3` - Invoked after mount and on live patch events
+3. `render/1` - Renders the template whenever state changes
+
+## Callbacks
+
+### mount/3
+
+```elixir
+@callback mount(
+  params :: unsigned_params() | :not_mounted_at_router,
+  session :: map,
+  socket :: Socket.t()
+) :: {:ok, Socket.t()} | {:ok, Socket.t(), keyword()}
+```
+
+The LiveView entry-point called twice: once for initial page load and again to establish the live socket.
+
+<ParamField path="params" type="map | :not_mounted_at_router">
+  A map of string keys containing query params and router path parameters. Returns `:not_mounted_at_router` if not mounted at router.
+</ParamField>
+
+<ParamField path="session" type="map">
+  The connection session containing private data set by the application.
+</ParamField>
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+<ResponseField name="return" type="{:ok, socket} | {:ok, socket, options}">
+  Returns updated socket with optional configuration:
+  - `:temporary_assigns` - Assigns reset after each render
+  - `:layout` - Optional layout override
+</ResponseField>
+
+**Example:**
+
+```elixir
+def mount(_params, _session, socket) do
+  if connected?(socket), do: :timer.send_interval(1000, self(), :tick)
+  {:ok, assign(socket, date: :calendar.local_time())}
+end
+```
+
+### render/1
+
+```elixir
+@callback render(assigns :: Socket.assigns()) :: Phoenix.LiveView.Rendered.t()
+```
+
+Renders a template. Invoked whenever LiveView detects new content must be rendered and sent to the client.
+
+<ParamField path="assigns" type="map">
+  The socket assigns map.
+</ParamField>
+
+<ResponseField name="return" type="Phoenix.LiveView.Rendered.t()">
+  Must return a template defined via the `~H` sigil.
+</ResponseField>
+
+**Example:**
+
+```elixir
+def render(assigns) do
+  ~H"""
+  <div>Hello {@name}!</div>
+  """
+end
+```
+
+### handle_params/3
+
+```elixir
+@callback handle_params(
+  unsigned_params(),
+  uri :: String.t(),
+  socket :: Socket.t()
+) :: {:noreply, Socket.t()}
+```
+
+Invoked after mount and whenever there is a live patch event.
+
+<ParamField path="params" type="map">
+  Current parameters including router params and query params.
+</ParamField>
+
+<ParamField path="uri" type="string">
+  The current URI from the client.
+</ParamField>
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+### handle_event/3
+
+```elixir
+@callback handle_event(
+  event :: binary,
+  unsigned_params(),
+  socket :: Socket.t()
+) :: {:noreply, Socket.t()} | {:reply, map, Socket.t()}
+```
+
+Invoked to handle events sent by the client.
+
+<ParamField path="event" type="string">
+  The event name (e.g., "save", "delete").
+</ParamField>
+
+<ParamField path="params" type="map">
+  The event payload as a map.
+</ParamField>
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+<ResponseField name="return" type="{:noreply, socket} | {:reply, map, socket}">
+  Returns updated socket, optionally with a reply map sent back to client.
+</ResponseField>
+
+### handle_info/2
+
+```elixir
+@callback handle_info(msg :: term, socket :: Socket.t()) :: {:noreply, Socket.t()}
+```
+
+Invoked to handle messages from other Elixir processes.
+
+<ParamField path="msg" type="term">
+  The message received from another process.
+</ParamField>
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+### handle_async/3
+
+```elixir
+@callback handle_async(
+  name :: term,
+  async_fun_result :: {:ok, term} | {:exit, term},
+  socket :: Socket.t()
+) :: {:noreply, Socket.t()}
+```
+
+Invoked when the result of a `start_async/3` operation is available.
+
+<ParamField path="name" type="term">
+  The name given to `start_async/3`.
+</ParamField>
+
+<ParamField path="result" type="{:ok, result} | {:exit, reason}">
+  The async function result wrapped in `:ok` or `:exit`.
+</ParamField>
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+## Functions
+
+### assign/3
+
+Adds a key-value pair to socket assigns.
+
+```elixir
+assign(socket, :name, "Elixir")
+```
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+<ParamField path="key" type="atom">
+  The assign key.
+</ParamField>
+
+<ParamField path="value" type="any">
+  The assign value.
+</ParamField>
+
+<ResponseField name="return" type="Socket.t()">
+  Updated socket with new assign.
+</ResponseField>
+
+### assign_new/3
+
+Assigns a key with value from function if one does not yet exist.
+
+```elixir
+assign_new(socket, :current_user, fn -> Accounts.get_user!(user_id) end)
+```
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+<ParamField path="key" type="atom">
+  The assign key.
+</ParamField>
+
+<ParamField path="fun" type="function">
+  Function returning the value (0 or 1 arity).
+</ParamField>
+
+### update/3
+
+Updates an existing key with a function.
+
+```elixir
+update(socket, :count, &(&1 + 1))
+```
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+<ParamField path="key" type="atom">
+  The assign key to update.
+</ParamField>
+
+<ParamField path="fun" type="function">
+  Function receiving current value and returning updated value.
+</ParamField>
+
+### push_event/3
+
+Pushes an event to the client.
+
+```elixir
+push_event(socket, "scores", %{points: 100, user: "josé"})
+```
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+<ParamField path="event" type="string">
+  The event name.
+</ParamField>
+
+<ParamField path="payload" type="map">
+  The event data.
+</ParamField>
+
+<ParamField path="opts" type="keyword" default="[]">
+  Options:
+  - `:dispatch` - `:before` or `:after` patch (default: `:after`)
+</ParamField>
+
+### push_navigate/2
+
+Annotates the socket for navigation to another LiveView in the same `live_session`.
+
+```elixir
+push_navigate(socket, to: "/")
+push_navigate(socket, to: "/", replace: true)
+```
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+<ParamField path="opts" type="keyword">
+  Options:
+  - `:to` (required) - The path to navigate to
+  - `:replace` - Replace browser history (default: `false`)
+</ParamField>
+
+### push_patch/2
+
+Annotates the socket for navigation within the current LiveView.
+
+```elixir
+push_patch(socket, to: "/")
+push_patch(socket, to: "/", replace: true)
+```
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+<ParamField path="opts" type="keyword">
+  Options:
+  - `:to` (required) - The path to patch to
+  - `:replace` - Replace browser history (default: `false`)
+</ParamField>
+
+### redirect/2
+
+Annotates the socket for redirect to a destination path.
+
+```elixir
+redirect(socket, to: "/")
+redirect(socket, external: "https://example.com")
+```
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+<ParamField path="opts" type="keyword">
+  Options:
+  - `:to` - Local path to redirect to
+  - `:external` - External URL to redirect to
+  - `:status` - HTTP status code (default: 302)
+</ParamField>
+
+### put_flash/3
+
+Adds a flash message to the socket.
+
+```elixir
+put_flash(socket, :info, "It worked!")
+put_flash(socket, :error, "You can't access that page")
+```
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+<ParamField path="kind" type="atom">
+  The flash type (`:info`, `:error`, etc.).
+</ParamField>
+
+<ParamField path="msg" type="string">
+  The flash message.
+</ParamField>
+
+### stream/4
+
+Assigns a new stream or inserts items into an existing stream.
+
+```elixir
+stream(socket, :songs, songs)
+stream(socket, :songs, songs, at: 0, limit: 10)
+```
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+<ParamField path="name" type="atom | string">
+  The stream name.
+</ParamField>
+
+<ParamField path="items" type="Enumerable.t()">
+  Items to insert.
+</ParamField>
+
+<ParamField path="opts" type="keyword" default="[]">
+  Options:
+  - `:at` - Index to insert items (default: `-1`)
+  - `:reset` - Reset stream on client (default: `false`)
+  - `:limit` - Limit items in UI
+</ParamField>
+
+### stream_insert/4
+
+Inserts a new item or updates an existing item in the stream.
+
+```elixir
+stream_insert(socket, :songs, song)
+stream_insert(socket, :songs, song, at: 0, limit: -10)
+```
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+<ParamField path="name" type="atom | string">
+  The stream name.
+</ParamField>
+
+<ParamField path="item" type="any">
+  Item to insert or update.
+</ParamField>
+
+<ParamField path="opts" type="keyword" default="[]">
+  Options:
+  - `:at` - Index to insert item (default: `-1`)
+  - `:limit` - Limit items in UI
+</ParamField>
+
+### stream_delete/3
+
+Deletes an item from the stream.
+
+```elixir
+stream_delete(socket, :songs, song)
+```
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+<ParamField path="name" type="atom | string">
+  The stream name.
+</ParamField>
+
+<ParamField path="item" type="any">
+  Item to delete.
+</ParamField>
+
+### assign_async/3
+
+Assigns keys asynchronously using a task.
+
+```elixir
+assign_async(socket, :org, fn -> {:ok, %{org: fetch_org!(slug)}} end)
+```
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+<ParamField path="keys" type="atom | list">
+  Key or list of keys to assign.
+</ParamField>
+
+<ParamField path="func" type="function">
+  Function returning `{:ok, assigns}` or `{:error, reason}`.
+</ParamField>
+
+<ParamField path="opts" type="keyword" default="[]">
+  Options:
+  - `:supervisor` - `Task.Supervisor` to use
+  - `:reset` - Remove previous results (default: `false`)
+</ParamField>
+
+### start_async/3
+
+Wraps a function in an asynchronous task.
+
+```elixir
+start_async(socket, :my_task, fn -> fetch_data() end)
+```
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+<ParamField path="name" type="term">
+  Name for the async operation.
+</ParamField>
+
+<ParamField path="func" type="function">
+  Function to execute asynchronously.
+</ParamField>
+
+<ParamField path="opts" type="keyword" default="[]">
+  Options:
+  - `:supervisor` - `Task.Supervisor` to use
+</ParamField>
+
+### send_update/3
+
+Asynchronously updates a LiveComponent with new assigns.
+
+```elixir
+send_update(Cart, id: "cart", status: "cancelled")
+send_update(pid, Cart, id: "cart", status: "cancelled")
+```
+
+<ParamField path="pid" type="pid" default="self()">
+  The LiveView process ID.
+</ParamField>
+
+<ParamField path="module" type="atom">
+  The LiveComponent module.
+</ParamField>
+
+<ParamField path="assigns" type="keyword | map">
+  Assigns to update (must include `:id`).
+</ParamField>
+
+### attach_hook/4
+
+Attaches a function by name for a lifecycle stage.
+
+```elixir
+attach_hook(socket, :my_hook, :handle_event, fn event, params, socket ->
+  # Handle event
+  {:cont, socket}
+end)
+```
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+<ParamField path="name" type="atom">
+  Hook name.
+</ParamField>
+
+<ParamField path="stage" type="atom">
+  Lifecycle stage: `:handle_params`, `:handle_event`, `:handle_info`, `:handle_async`, `:after_render`.
+</ParamField>
+
+<ParamField path="fun" type="function">
+  Hook function.
+</ParamField>
+
+### connected?/1
+
+Returns true if the socket is connected.
+
+```elixir
+if connected?(socket), do: subscribe_to_updates()
+```
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+<ResponseField name="return" type="boolean">
+  `true` if connected via WebSocket, `false` during initial HTTP render.
+</ResponseField>
+
+### get_connect_params/1
+
+Accesses the connect params sent by the client.
+
+```elixir
+get_connect_params(socket)["time_zone"]
+```
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+<ResponseField name="return" type="map | nil">
+  Connect params on connected mount, `nil` when disconnected.
+</ResponseField>
+
+### allow_upload/3
+
+Allows an upload for the provided name.
+
+```elixir
+allow_upload(socket, :avatar, accept: ~w(.jpg .jpeg), max_entries: 2)
+allow_upload(socket, :avatar, accept: :any)
+```
+
+<ParamField path="socket" type="Socket.t()">
+  The LiveView socket.
+</ParamField>
+
+<ParamField path="name" type="atom">
+  Upload name.
+</ParamField>
+
+<ParamField path="opts" type="keyword">
+  Options:
+  - `:accept` (required) - File extensions list or `:any`
+  - `:max_entries` - Maximum files (default: 1)
+  - `:max_file_size` - Maximum bytes (default: 8MB)
+  - `:chunk_size` - Chunk size in bytes (default: 64KB)
+  - `:auto_upload` - Auto-upload on selection (default: `false`)
+  - `:external` - Function for external uploads
+  - `:progress` - Progress callback function
+</ParamField>

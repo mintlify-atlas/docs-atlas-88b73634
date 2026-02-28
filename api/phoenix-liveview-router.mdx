@@ -1,0 +1,182 @@
+---
+title: Phoenix.LiveView.Router
+description: API reference for Phoenix.LiveView.Router module
+---
+
+Provides LiveView routing for Phoenix routers.
+
+## Overview
+
+The `Phoenix.LiveView.Router` module provides macros and functions for defining LiveView routes in Phoenix applications. It enables you to mount LiveViews using the `live/4` macro and organize related LiveViews into live sessions.
+
+## Macros
+
+### live/4
+
+Defines a LiveView route.
+
+```elixir
+live(path, live_view, action \\ nil, opts \\ [])
+```
+
+<ParamField path="path" type="string" required>
+  The URL path for the LiveView route
+</ParamField>
+
+<ParamField path="live_view" type="module" required>
+  The LiveView module to mount
+</ParamField>
+
+<ParamField path="action" type="atom">
+  Optional action name that will be available as `@live_action` in the LiveView
+</ParamField>
+
+<ParamField path="opts" type="keyword">
+  Options for configuring the route:
+  
+  - `:container` - Tuple for HTML tag and attributes for the LiveView container, e.g., `{:li, style: "color: blue;"}`
+  - `:as` - Configure the named helper (defaults to `:live` or LiveView name when using actions)
+  - `:metadata` - Map of metadata for telemetry events and route info
+  - `:private` - Map of private data to put in the plug connection
+</ParamField>
+
+<Note>
+The HTTP request method that a route defined by `live/4` responds to is `GET`.
+</Note>
+
+#### Examples
+
+**Basic LiveView route:**
+
+```elixir
+live "/thermostat", ThermostatLive
+```
+
+**LiveView with actions:**
+
+```elixir
+live "/articles", ArticleLive.Index, :index
+live "/articles/new", ArticleLive.Index, :new
+live "/articles/:id/edit", ArticleLive.Index, :edit
+```
+
+**LiveView with container options:**
+
+```elixir
+live "/dashboard", DashboardLive, container: {:main, class: "row"}
+```
+
+**Using the action in your template:**
+
+```heex
+<.live_component :if={@live_action == :new} module={MyAppWeb.ArticleLive.FormComponent} id="form" />
+```
+
+### live_session/3
+
+Defines a live session for live redirects within a group of live routes.
+
+```elixir
+live_session(name, opts \\ [], do: block)
+```
+
+<ParamField path="name" type="atom" required>
+  Unique name for the live session
+</ParamField>
+
+<ParamField path="opts" type="keyword">
+  Options for configuring the session:
+  
+  - `:session` - Extra session map or MFA tuple to merge with the LiveView session
+  - `:root_layout` - Root layout tuple for initial HTTP render
+  - `:on_mount` - List of hooks to attach to mount lifecycle of each LiveView
+  - `:layout` - Layout the LiveView will be rendered in
+</ParamField>
+
+<ParamField path="block" type="do block" required>
+  Block containing `live/4` route definitions
+</ParamField>
+
+<Warning>
+`live_session` does not work with `forward`. LiveView expects your `live` routes to always be directly defined within the main router.
+</Warning>
+
+<Warning>
+Aliases set with `Phoenix.Router.scope/2` are not expanded in `live_session` arguments. You must use the full module name.
+</Warning>
+
+#### Examples
+
+**Basic live session:**
+
+```elixir
+live_session :default do
+  live "/feed", FeedLive, :index
+  live "/status", StatusLive, :index
+  live "/status/:id", StatusLive, :show
+end
+```
+
+**Live session with authentication:**
+
+```elixir
+live_session :admin, on_mount: MyAppWeb.AdminLiveAuth do
+  live "/admin", AdminDashboardLive, :index
+  live "/admin/posts", AdminPostLive, :index
+end
+```
+
+**Live session with custom layout:**
+
+```elixir
+live_session :app, root_layout: {MyAppWeb.LayoutView, :app} do
+  live "/dashboard", DashboardLive
+end
+```
+
+## Security Considerations
+
+`live_session` draws boundaries between groups of LiveViews. Key security points:
+
+- **Navigation between sessions**: Redirecting between different `live_session`s forces a full page reload and establishes a new LiveView connection
+- **Authentication**: Perform authentication checks in `on_mount` callbacks, as navigation within a session does not go through the plug pipeline
+- **Authorization**: Always validate on mount (page access) and handle_event (action permissions)
+
+## Functions
+
+### fetch_live_flash/2
+
+Fetches the LiveView flash and merges with controller flash.
+
+```elixir
+fetch_live_flash(conn, opts \\ [])
+```
+
+<ParamField path="conn" type="Plug.Conn.t()" required>
+  The connection struct
+</ParamField>
+
+<ParamField path="opts" type="keyword">
+  Options (currently unused)
+</ParamField>
+
+<ResponseField name="conn" type="Plug.Conn.t()">
+  Connection with merged flash
+</ResponseField>
+
+Replaces the default `:fetch_flash` plug used by `Phoenix.Router`.
+
+#### Example
+
+```elixir
+defmodule MyAppWeb.Router do
+  use Phoenix.Router
+  import Phoenix.LiveView.Router
+
+  pipeline :browser do
+    plug :fetch_session
+    plug :fetch_live_flash
+    plug :protect_from_forgery
+  end
+end
+```

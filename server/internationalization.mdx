@@ -1,0 +1,500 @@
+---
+title: "Internationalization (i18n)"
+description: "Implement multi-language support in LiveView with Gettext"
+---
+
+For internationalization with [Gettext](https://hexdocs.pm/gettext/Gettext.html), you must call `Gettext.put_locale/2` in the LiveView mount callback to instruct the LiveView which locale to use for rendering.
+
+## Locale Storage Strategies
+
+There are multiple approaches to determine and store the user's locale:
+
+1. Store locale in URL parameters
+2. Store locale in the session
+3. Store locale in the database
+
+We will cover each approach and their trade-offs.
+
+## Locale from URL Parameters
+
+Store the locale as part of the URL path or query parameters.
+
+### Router Configuration
+
+Define routes with a locale parameter:
+
+```elixir
+scope "/:locale" do
+  live "/", HomeLive
+  live "/dashboard", DashboardLive
+  get "/about", PageController, :about
+end
+```
+
+URLs will look like: `/en/dashboard`, `/es/dashboard`, `/fr/dashboard`
+
+### Setting Locale in Mount
+
+```elixir
+def mount(%{"locale" => locale}, _session, socket) do
+  Gettext.put_locale(MyApp.Gettext, locale)
+  {:ok, socket}
+end
+```
+
+### Using the `on_mount` Hook
+
+Automatically restore the locale for every LiveView:
+
+```elixir
+defmodule MyAppWeb.RestoreLocale do
+  import Phoenix.LiveView
+
+  def on_mount(:default, %{"locale" => locale}, _session, socket) do
+    Gettext.put_locale(MyApp.Gettext, locale)
+    {:cont, socket}
+  end
+
+  # Catch-all case
+  def on_mount(:default, _params, _session, socket) do
+    {:cont, socket}
+  end
+end
+```
+
+Add to your `MyAppWeb` module:
+
+```elixir
+# lib/my_app_web.ex
+def live_view do
+  quote do
+    use Phoenix.LiveView
+    on_mount MyAppWeb.RestoreLocale
+    unquote(view_helpers())
+  end
+end
+```
+
+### Handling Missing Locale
+
+Redirect users who access URLs without a locale:
+
+```elixir
+# Router
+scope "/" do
+  get "/*path", RedirectController, :redirect_with_locale
+end
+
+# Controller
+defmodule MyAppWeb.RedirectController do
+  use MyAppWeb, :controller
+
+  def redirect_with_locale(conn, %{"path" => path}) do
+    locale = get_locale_from_header(conn) || "en"
+    redirect(conn, to: "/#{locale}/#{Enum.join(path, "/")}")
+  end
+
+  defp get_locale_from_header(conn) do
+    case Plug.Conn.get_req_header(conn, "accept-language") do
+      [value | _] -> parse_locale(value)
+      [] -> nil
+    end
+  end
+
+  defp parse_locale(header) do
+    header
+    |> String.split(",")
+    |> List.first()
+    |> String.split("-")
+    |> List.first()
+  end
+end
+```
+
+### Changing Locale
+
+<Warning>
+Because the Gettext locale is not stored in assigns, you must use `<.link navigate={...} />` (not `patch`) to change the locale, which will remount the LiveView.
+</Warning>
+
+```heex
+<nav>
+  <.link navigate={~p"/en#{@current_path}"}>English</.link>
+  <.link navigate={~p"/es#{@current_path}"}>Español</.link>
+  <.link navigate={~p"/fr#{@current_path}"}>Français</.link>
+</nav>
+```
+
+### Pros and Cons
+
+**Pros:**
+- URLs are shareable with locale information
+- Better for SEO (search engines can index different language versions)
+- No server-side storage needed
+- Works for anonymous users
+
+**Cons:**
+- Locale changes require navigation (not patch)
+- URLs are longer
+- Requires route configuration changes
+
+## Locale from Session
+
+Store the locale in the Plug session cookie.
+
+### Setting Locale in Session
+
+When the user selects a language:
+
+```elixir
+def put_user_locale(conn, locale) do
+  Gettext.put_locale(MyApp.Gettext, locale)
+  put_session(conn, :locale, locale)
+end
+```
+
+Or when logging in:
+
+```elixir
+def put_user_session(conn, current_user) do
+  Gettext.put_locale(MyApp.Gettext, current_user.locale)
+
+  conn
+  |> put_session(:user_id, current_user.id)
+  |> put_session(:locale, current_user.locale)
+end
+```
+
+### Restoring from Session
+
+```elixir
+def mount(_params, %{"locale" => locale}, socket) do
+  Gettext.put_locale(MyApp.Gettext, locale)
+  {:ok, socket}
+end
+```
+
+Or with a hook:
+
+```elixir
+defmodule MyAppWeb.RestoreLocale do
+  import Phoenix.LiveView
+
+  def on_mount(:default, _params, %{"locale" => locale}, socket) do
+    Gettext.put_locale(MyApp.Gettext, locale)
+    {:cont, socket}
+  end
+
+  def on_mount(:default, _params, _session, socket) do
+    # Default locale if not set
+    Gettext.put_locale(MyApp.Gettext, "en")
+    {:cont, socket}
+  end
+end
+```
+
+### Changing Locale
+
+<Warning>
+Since the locale is in the session, you can only change it via a controller request (not LiveView events).
+</Warning>
+
+```heex
+<.link href={~p"/locale/en"}>English</.link>
+<.link href={~p"/locale/es"}>Español</.link>
+```
+
+```elixir
+# Router
+get "/locale/:locale", LocaleController, :set
+
+# Controller
+defmodule MyAppWeb.LocaleController do
+  use MyAppWeb, :controller
+
+  def set(conn, %{"locale" => locale}) do
+    conn
+    |> put_session(:locale, locale)
+    |> redirect(to: get_return_path(conn))
+  end
+
+  defp get_return_path(conn) do
+    conn.params["return_to"] || "/"
+  end
+end
+```
+
+### Pros and Cons
+
+**Pros:**
+- Persists across sessions
+- Doesn't clutter URLs
+- Easy to implement
+
+**Cons:**
+- Requires controller for changes
+- Full page reload on locale change
+- Not SEO-friendly (same URL for all languages)
+- Requires cookies
+
+## Locale from Database
+
+Store user's locale preference in the database.
+
+### Database Schema
+
+```elixir
+schema "users" do
+  field :email, :string
+  field :locale, :string, default: "en"
+  # ...
+end
+```
+
+### Loading from Database
+
+```elixir
+def mount(_params, %{"user_id" => user_id}, socket) do
+  user = Users.get_user!(user_id)
+  Gettext.put_locale(MyApp.Gettext, user.locale)
+  {:ok, assign(socket, current_user: user)}
+end
+```
+
+Or with a hook:
+
+```elixir
+defmodule MyAppWeb.UserLiveAuth do
+  import Phoenix.LiveView
+  import Phoenix.Component
+
+  def on_mount(:default, _params, %{"user_token" => token}, socket) do
+    socket = assign_new(socket, :current_user, fn ->
+      Accounts.get_user_by_session_token(token)
+    end)
+
+    if user = socket.assigns.current_user do
+      Gettext.put_locale(MyApp.Gettext, user.locale)
+      {:cont, socket}
+    else
+      {:halt, redirect(socket, to: "/login")}
+    end
+  end
+
+  def on_mount(:default, _params, _session, socket) do
+    # Default for anonymous users
+    Gettext.put_locale(MyApp.Gettext, "en")
+    {:cont, socket}
+  end
+end
+```
+
+### Changing Locale
+
+Update the database and reload:
+
+```elixir
+def handle_event("change_locale", %{"locale" => locale}, socket) do
+  user = socket.assigns.current_user
+  {:ok, user} = Users.update_user(user, %{locale: locale})
+  
+  Gettext.put_locale(MyApp.Gettext, locale)
+  {:noreply, assign(socket, current_user: user)}
+end
+```
+
+```heex
+<button phx-click="change_locale" phx-value-locale="en">English</button>
+<button phx-click="change_locale" phx-value-locale="es">Español</button>
+```
+
+<Tip>
+For database-stored locales, you can change the locale via LiveView events without page reloads!
+</Tip>
+
+### Pros and Cons
+
+**Pros:**
+- Persists across devices
+- Can change via LiveView (no page reload)
+- User-specific settings
+- Can have per-user defaults
+
+**Cons:**
+- Only works for logged-in users
+- Requires database query
+- Not SEO-friendly
+- Need fallback for anonymous users
+
+## Mixed Approach (Recommended)
+
+In practice, you'll likely combine multiple approaches:
+
+```elixir
+defmodule MyAppWeb.RestoreLocale do
+  import Phoenix.LiveView
+
+  def on_mount(:default, params, session, socket) do
+    locale = determine_locale(params, session, socket)
+    Gettext.put_locale(MyApp.Gettext, locale)
+    {:cont, assign(socket, locale: locale)}
+  end
+
+  defp determine_locale(params, session, socket) do
+    cond do
+      # 1. URL parameter (highest priority)
+      locale = params["locale"] ->
+        locale
+      
+      # 2. Logged-in user's preference
+      user = socket.assigns[:current_user] ->
+        user.locale
+      
+      # 3. Session
+      locale = session["locale"] ->
+        locale
+      
+      # 4. Default
+      true ->
+        "en"
+    end
+  end
+end
+```
+
+## Translation Workflow
+
+### Extracting Translations
+
+Extract strings to translate:
+
+```bash
+mix gettext.extract
+mix gettext.merge priv/gettext
+```
+
+### Using Translations in Templates
+
+```heex
+<h1>{gettext("Welcome")}</h1>
+<p>{gettext("You have %{count} messages", count: @message_count)}</p>
+```
+
+### Using in LiveView Code
+
+```elixir
+import MyAppWeb.Gettext
+
+def handle_event("save", _params, socket) do
+  message = gettext("Successfully saved!")
+  {:noreply, put_flash(socket, :info, message)}
+end
+```
+
+### Pluralization
+
+```elixir
+ngettext(
+  "You have 1 message",
+  "You have %{count} messages",
+  @message_count,
+  count: @message_count
+)
+```
+
+## Complete Example
+
+```elixir
+# Router
+scope "/:locale", MyAppWeb do
+  pipe_through :browser
+
+  live_session :default,
+    on_mount: [MyAppWeb.RestoreLocale, MyAppWeb.UserLiveAuth] do
+    live "/", HomeLive
+    live "/dashboard", DashboardLive
+  end
+end
+
+# Hook
+defmodule MyAppWeb.RestoreLocale do
+  import Phoenix.LiveView
+
+  @supported_locales ~w(en es fr de)
+
+  def on_mount(:default, %{"locale" => locale}, _session, socket) do
+    locale = if locale in @supported_locales, do: locale, else: "en"
+    Gettext.put_locale(MyApp.Gettext, locale)
+    {:cont, assign(socket, locale: locale)}
+  end
+
+  def on_mount(:default, _params, _session, socket) do
+    {:cont, redirect(socket, to: "/en")}
+  end
+end
+
+# LiveView
+defmodule MyAppWeb.DashboardLive do
+  use MyAppWeb, :live_view
+  import MyAppWeb.Gettext
+
+  def render(assigns) do
+    ~H"""
+    <div>
+      <nav>
+        <.link navigate={~p"/en/dashboard"}>English</.link>
+        <.link navigate={~p"/es/dashboard"}>Español</.link>
+        <.link navigate={~p"/fr/dashboard"}>Français</.link>
+      </nav>
+      
+      <h1>{gettext("Dashboard")}</h1>
+      <p>
+        {ngettext(
+          "You have 1 notification",
+          "You have %{count} notifications",
+          @notification_count,
+          count: @notification_count
+        )}
+      </p>
+    </div>
+    """
+  end
+end
+```
+
+## Best Practices
+
+1. **Support fallback locale**: Always have a default when locale is missing
+2. **Validate locale values**: Only accept supported locales
+3. **Use URL for SEO**: If SEO matters, put locale in URL
+4. **Store user preference**: Save in database for logged-in users
+5. **Detect from headers**: Use `Accept-Language` for first-time visitors
+6. **Test all locales**: Ensure translations work correctly
+7. **Keep translation keys consistent**: Use descriptive, namespaced keys
+8. **Handle missing translations**: Configure Gettext's behavior for missing translations
+
+## Testing i18n
+
+```elixir
+test "displays content in Spanish", %{conn: conn} do
+  {:ok, view, _html} = live(conn, "/es/dashboard")
+  assert has_element?(view, "h1", "Panel de Control")
+end
+
+test "changes locale when link clicked", %{conn: conn} do
+  {:ok, view, _html} = live(conn, "/en/dashboard")
+  assert has_element?(view, "h1", "Dashboard")
+  
+  {:ok, view, _html} = view |> element("a", "Español") |> render_click() |> follow_redirect(conn)
+  assert has_element?(view, "h1", "Panel de Control")
+end
+```
+
+## Summary
+
+- **URL parameters**: Best for SEO, shareable URLs, anonymous users
+- **Session**: Good for persistence without cluttering URLs
+- **Database**: Best for logged-in users, works across devices
+- **Mixed approach**: Combine methods for best user experience
+- **Use `on_mount`**: Centralize locale restoration logic
+- **Navigate for changes**: Use `navigate` (not `patch`) when locale is not in assigns

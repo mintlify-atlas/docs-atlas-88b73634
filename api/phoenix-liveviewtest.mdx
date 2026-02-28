@@ -1,0 +1,571 @@
+---
+title: Phoenix.LiveViewTest
+description: API reference for Phoenix.LiveViewTest module
+---
+
+Conveniences for testing function components, LiveViews, and LiveComponents.
+
+## Overview
+
+The `Phoenix.LiveViewTest` module provides a comprehensive testing API for Phoenix LiveView applications. It supports testing function components, stateful LiveViews, and LiveComponents through process communication that simulates browser interactions.
+
+## Testing Function Components
+
+### render_component/3
+
+Renders a component for testing.
+
+```elixir
+render_component(component, assigns \\ %{}, opts \\ [])
+```
+
+<ParamField path="component" type="function | module" required>
+  Either a function component (anonymous function) or a stateful component module
+</ParamField>
+
+<ParamField path="assigns" type="map">
+  Assigns to pass to the component
+</ParamField>
+
+<ParamField path="opts" type="keyword">
+  Options including `:router` if the component uses routing
+</ParamField>
+
+#### Examples
+
+**Testing a function component:**
+
+```elixir
+import Phoenix.LiveViewTest
+
+test "greets user" do
+  assert render_component(&MyComponents.greet/1, name: "Mary") =~
+           "Hello, Mary!"
+end
+```
+
+**Testing a stateful component:**
+
+```elixir
+test "renders user component" do
+  assert render_component(MyComponent, id: 123, user: %User{}) =~
+           "some markup"
+end
+```
+
+### rendered_to_string/1
+
+Converts a rendered template to a string.
+
+```elixir
+rendered_to_string(rendered)
+```
+
+#### Example
+
+```elixir
+import Phoenix.Component
+import Phoenix.LiveViewTest
+
+test "greets" do
+  assigns = %{}
+  assert rendered_to_string(~H"""
+         <MyComponents.greet name="Mary" />
+         """) == "<div>Hello, Mary!</div>"
+end
+```
+
+## Testing LiveViews
+
+### live/2 and live/3
+
+Spawns a connected LiveView process.
+
+```elixir
+live(conn, path \\ nil, opts \\ [])
+```
+
+<ParamField path="conn" type="Plug.Conn.t()" required>
+  The test connection
+</ParamField>
+
+<ParamField path="path" type="string">
+  The path to navigate to. If nil, uses a previously rendered conn
+</ParamField>
+
+<ParamField path="opts" type="keyword">
+  Options:
+  - `:on_error` - Either `:raise` or `:warn` for error handling (default: `:raise`)
+</ParamField>
+
+<ResponseField name="result" type="{:ok, view, html} | {:error, reason}">
+  Returns a tuple with the view, HTML on success, or error on redirect
+</ResponseField>
+
+#### Examples
+
+**Connected mount:**
+
+```elixir
+test "connected mount", %{conn: conn} do
+  {:ok, view, html} = live(conn, "/thermo")
+  assert html =~ "Temperature"
+end
+```
+
+**Two-step mount:**
+
+```elixir
+test "disconnected and connected mount", %{conn: conn} do
+  conn = get(conn, "/my-path")
+  assert html_response(conn, 200) =~ "<h1>Disconnected</h1>"
+  
+  {:ok, view, html} = live(conn)
+  assert html =~ "<h1>Connected</h1>"
+end
+```
+
+**Handling redirects:**
+
+```elixir
+test "redirected mount", %{conn: conn} do
+  assert {:error, {:redirect, %{to: "/somewhere"}}} = live(conn, "/path")
+end
+```
+
+### live_isolated/3
+
+Spawns a connected LiveView process in isolation.
+
+```elixir
+live_isolated(conn, live_view, opts \\ [])
+```
+
+Useful for testing LiveViews that are not directly routable.
+
+<ParamField path="opts" type="keyword">
+  Options:
+  - `:session` - Session data for the LiveView
+  - `:on_error` - Error handling mode
+</ParamField>
+
+#### Example
+
+```elixir
+test "isolated mount" do
+  {:ok, view, html} = 
+    live_isolated(conn, MyAppWeb.ClockLive, session: %{"tz" => "EST"})
+  
+  assert html =~ "EST"
+end
+```
+
+### put_connect_params/2
+
+Puts connect params for LiveView connections.
+
+```elixir
+put_connect_params(conn, params)
+```
+
+#### Example
+
+```elixir
+{:ok, view, html} =
+  conn
+  |> put_connect_params(%{"param" => "value"})
+  |> live_isolated(MyLive, session: %{"tz" => "EST"})
+```
+
+## Event Testing Functions
+
+### render_click/1 and render_click/3
+
+Sends a click event and returns the rendered result.
+
+```elixir
+render_click(element, value \\ %{})
+render_click(view, event, value)
+```
+
+#### Examples
+
+```elixir
+test "increment temperature" do
+  {:ok, view, _html} = live(conn, "/thermo")
+  
+  # Using element
+  assert view
+         |> element("button#inc")
+         |> render_click() =~ "31℉"
+  
+  # Direct event
+  assert render_click(view, :inc, %{}) =~ "31℉"
+end
+```
+
+### render_submit/1 and render_submit/3
+
+Sends a form submit event.
+
+```elixir
+render_submit(element, value \\ %{})
+render_submit(view, event, value)
+```
+
+#### Examples
+
+```elixir
+test "form submission" do
+  {:ok, view, _html} = live(conn, "/users/new")
+  
+  assert view
+         |> form("#user-form", user: %{name: "Alice"})
+         |> render_submit() =~ "User created"
+end
+```
+
+### render_change/1 and render_change/3
+
+Sends a form change event.
+
+```elixir
+render_change(element, value \\ %{})
+render_change(view, event, value)
+```
+
+#### Example
+
+```elixir
+test "form validation" do
+  {:ok, view, _html} = live(conn, "/form")
+  
+  assert view
+         |> form("#my-form", user: %{email: "invalid"})
+         |> render_change() =~ "must include @"
+end
+```
+
+### render_blur/1, render_focus/1, render_keydown/1, render_keyup/1
+
+Send respective events and return rendered results.
+
+#### Examples
+
+```elixir
+# Blur event
+assert view |> element("#email") |> render_blur() =~ "Field validated"
+
+# Focus event
+assert view |> element("#email") |> render_focus() =~ "Help text"
+
+# Keydown event
+assert view |> element("#input") |> render_keydown() =~ "Key pressed"
+
+# Keyup event
+assert view |> element("#input") |> render_keyup() =~ "Key released"
+```
+
+### render_hook/3
+
+Sends a hook event to the view or element.
+
+```elixir
+render_hook(view_or_element, event, value \\ %{})
+```
+
+#### Examples
+
+```elixir
+# To view
+assert render_hook(view, :refresh, %{deg: 32}) =~ "32℉"
+
+# To component
+assert view
+       |> element("#thermo-component")
+       |> render_hook(:refresh, %{deg: 32}) =~ "32℉"
+```
+
+### render_patch/2
+
+Simulates a `push_patch` to the given path.
+
+```elixir
+render_patch(view, path)
+```
+
+#### Example
+
+```elixir
+html = render_patch(view, "/users?page=2")
+assert html =~ "Page 2"
+```
+
+### render_async/2
+
+Awaits all async tasks and renders the result.
+
+```elixir
+render_async(view_or_element, timeout \\ 100)
+```
+
+#### Example
+
+```elixir
+{:ok, lv, html} = live(conn, "/path")
+assert html =~ "loading data..."
+assert render_async(lv) =~ "data loaded!"
+```
+
+## Element Selection
+
+### element/3
+
+Returns an element to scope a function to.
+
+```elixir
+element(view, selector, text_filter \\ nil)
+```
+
+<ParamField path="view" type="View.t()" required>
+  The LiveView
+</ParamField>
+
+<ParamField path="selector" type="string" required>
+  CSS selector
+</ParamField>
+
+<ParamField path="text_filter" type="string | Regex">
+  Filter by text content
+</ParamField>
+
+#### Examples
+
+```elixir
+view |> element("#user-13")
+view |> element("button", "Save")
+view |> element("a", ~r/Edit/)
+view |> element(~s{[id="foo.bar.baz"]})
+```
+
+### has_element?/1 and has_element?/3
+
+Checks if an element exists.
+
+```elixir
+has_element?(element)
+has_element?(view, selector, text_filter \\ nil)
+```
+
+#### Examples
+
+```elixir
+assert has_element?(view, "#user-1")
+refute has_element?(view, "button", "Delete")
+assert view |> element("#notice") |> has_element?()
+```
+
+### form/3
+
+Returns a form element.
+
+```elixir
+form(view, selector, form_data \\ %{})
+```
+
+#### Example
+
+```elixir
+view
+|> form("#user-form", user: %{name: "Alice", email: "alice@example.com"})
+|> render_submit()
+```
+
+### put_submitter/2
+
+Puts a submitter element on a form.
+
+```elixir
+put_submitter(form, element_or_selector)
+```
+
+#### Example
+
+```elixir
+form = view |> form("#my-form")
+
+assert form
+       |> put_submitter("button[name=save]")
+       |> render_submit() =~ "Saved"
+```
+
+## File Upload Testing
+
+### file_input/4
+
+Builds a file input for testing uploads.
+
+```elixir
+file_input(view, form_selector, name, entries)
+```
+
+<ParamField path="entries" type="list">
+  List of maps with upload metadata:
+  - `:name` - File name
+  - `:content` - Binary content
+  - `:type` - MIME type
+  - `:size` - File size in bytes
+  - `:last_modified` - Timestamp
+</ParamField>
+
+#### Example
+
+```elixir
+avatar = file_input(lv, "#upload-form", :avatar, [
+  %{
+    last_modified: 1_594_171_879_000,
+    name: "myfile.jpeg",
+    content: File.read!("test/fixtures/myfile.jpg"),
+    size: 1_396_009,
+    type: "image/jpeg"
+  }
+])
+
+assert render_upload(avatar, "myfile.jpeg") =~ "100%"
+```
+
+## Navigation Assertions
+
+### assert_patch/2 and assert_patch/3
+
+Asserts a live patch occurred.
+
+```elixir
+assert_patch(view, timeout \\ 100)
+assert_patch(view, to, timeout \\ 100)
+```
+
+#### Examples
+
+```elixir
+render_click(view, :edit)
+path = assert_patch(view)
+assert path =~ ~r/\/edit/
+
+render_click(view, :next)
+assert_patch(view, "/page/2")
+```
+
+### assert_redirect/2 and assert_redirect/3
+
+Asserts a redirect occurred.
+
+```elixir
+assert_redirect(view, timeout \\ 100)
+assert_redirect(view, to, timeout \\ 100)
+```
+
+#### Examples
+
+```elixir
+render_click(view, :save)
+{path, flash} = assert_redirect(view)
+assert flash["info"] == "Saved"
+
+render_click(view, :cancel)
+flash = assert_redirect(view, "/")
+```
+
+### refute_redirected/1 and refute_redirected/2
+
+Refutes a redirect occurred.
+
+```elixir
+refute_redirected(view)
+refute_redirected(view, to)
+```
+
+## LiveComponent Testing
+
+### live_children/1
+
+Returns the list of child LiveViews.
+
+```elixir
+live_children(parent_view)
+```
+
+#### Example
+
+```elixir
+{:ok, view, _html} = live(conn, "/parent")
+assert [child_view] = live_children(view)
+assert render_click(child_view, :action) =~ "result"
+```
+
+### find_live_child/2
+
+Gets a nested LiveView child by ID.
+
+```elixir
+find_live_child(parent_view, child_id)
+```
+
+#### Example
+
+```elixir
+{:ok, view, _html} = live(conn, "/parent")
+clock_view = find_live_child(view, "clock")
+assert render_click(clock_view, :snooze) =~ "snoozing"
+```
+
+## Utility Functions
+
+### render/1
+
+Returns the HTML string of the rendered view or element.
+
+```elixir
+render(view_or_element)
+```
+
+### with_target/2
+
+Sets the target for events.
+
+```elixir
+with_target(view, target)
+```
+
+#### Example
+
+```elixir
+view
+|> with_target("#user-1,#user-2")
+|> render_click("Hide", %{})
+```
+
+### page_title/1
+
+Returns the most recent page title.
+
+```elixir
+page_title(view)
+```
+
+#### Example
+
+```elixir
+render_click(view, :navigate)
+assert page_title(view) =~ "Dashboard"
+```
+
+### open_browser/1
+
+Opens the default browser to display current HTML.
+
+```elixir
+open_browser(view_or_element)
+```
+
+Useful for debugging tests.

@@ -1,0 +1,479 @@
+---
+title: Phoenix.Component
+description: Define reusable function components with HEEx templates
+---
+
+## Overview
+
+A function component is any function that receives an assigns map as an argument and returns a rendered struct built with the `~H` sigil.
+
+```elixir
+def greet(assigns) do
+  ~H"""
+  <p>Hello, {@name}!</p>
+  """
+end
+```
+
+Function components are stateless and do not have a life-cycle, making them simpler than LiveComponents.
+
+## Macros
+
+### sigil_H/2
+
+The `~H` sigil for writing HEEx templates inside source files.
+
+```elixir
+~H"""
+<div title="My div" class={@class}>
+  <p>Hello {@name}</p>
+</div>
+"""
+```
+
+HEEx is a HTML-aware and component-friendly extension of EEx that provides:
+
+- Built-in handling of HTML attributes
+- HTML-like notation for function components
+- Compile-time validation of template structure
+- Minimized data sent over the wire
+- Out-of-the-box code formatting via `mix format`
+
+### attr/3
+
+Declares attributes for HEEx function components.
+
+```elixir
+attr :name, :string, required: true
+attr :age, :integer, default: 0
+
+def celebrate(assigns) do
+  ~H"""
+  <p>Happy birthday {@name}! You are {@age} years old.</p>
+  """
+end
+```
+
+<ParamField path="name" type="atom">
+  The attribute name.
+</ParamField>
+
+<ParamField path="type" type="atom">
+  The attribute type: `:any`, `:string`, `:atom`, `:boolean`, `:integer`, `:float`, `:list`, `:map`, `:fun`, `{:fun, arity}`, `:global`, or a struct module.
+</ParamField>
+
+<ParamField path="opts" type="keyword" default="[]">
+  Options:
+  - `:required` - Marks attribute as required
+  - `:default` - Default value if not provided
+  - `:examples` - Example values for documentation
+  - `:values` - Exhaustive list of accepted values
+  - `:doc` - Documentation string
+</ParamField>
+
+### slot/3
+
+Declares a function component slot.
+
+```elixir
+slot :header
+slot :inner_block, required: true
+slot :footer
+
+def modal(assigns) do
+  ~H"""
+  <div class="modal">
+    <div class="modal-header">{render_slot(@header) || "Modal"}</div>
+    <div class="modal-body">{render_slot(@inner_block)}</div>
+    <div class="modal-footer">{render_slot(@footer)}</div>
+  </div>
+  """
+end
+```
+
+<ParamField path="name" type="atom">
+  The slot name (use `:inner_block` for the default slot).
+</ParamField>
+
+<ParamField path="opts" type="keyword" default="[]">
+  Options:
+  - `:required` - Marks slot as required
+  - `:validate_attrs` - Validate slot attributes (default: `true`)
+  - `:doc` - Documentation string
+</ParamField>
+
+<ParamField path="block" type="do block" default="nil">
+  Code block containing `attr/3` calls for slot attributes.
+</ParamField>
+
+**Named slot with attributes:**
+
+```elixir
+slot :column, doc: "Columns with labels" do
+  attr :label, :string, required: true
+end
+
+attr :rows, :list, default: []
+
+def table(assigns) do
+  ~H"""
+  <table>
+    <tr>
+      <th :for={col <- @column}>{col.label}</th>
+    </tr>
+    <tr :for={row <- @rows}>
+      <td :for={col <- @column}>{render_slot(col, row)}</td>
+    </tr>
+  </table>
+  """
+end
+```
+
+### embed_templates/2
+
+Embeds external template files into the module as function components.
+
+```elixir
+defmodule MyAppWeb.Components do
+  use Phoenix.Component
+
+  embed_templates "pages/*"
+end
+```
+
+<ParamField path="pattern" type="string">
+  Wildcard pattern for files to embed.
+</ParamField>
+
+<ParamField path="opts" type="keyword" default="[]">
+  Options:
+  - `:root` - Root directory (default: `__DIR__`)
+  - `:suffix` - String to append to function names
+</ParamField>
+
+## Functions
+
+### assign/3
+
+Adds a key-value pair to assigns.
+
+```elixir
+assign(assigns, :name, "Elixir")
+```
+
+<ParamField path="assigns" type="map">
+  The assigns map from a function component.
+</ParamField>
+
+<ParamField path="key" type="atom">
+  The assign key.
+</ParamField>
+
+<ParamField path="value" type="any">
+  The assign value.
+</ParamField>
+
+<ResponseField name="return" type="map">
+  Updated assigns map.
+</ResponseField>
+
+### assign_new/3
+
+Assigns a key with value from function if one does not yet exist.
+
+```elixir
+assign_new(assigns, :bg_color, fn -> Enum.random(~w(red green blue)) end)
+```
+
+<ParamField path="assigns" type="map">
+  The assigns map.
+</ParamField>
+
+<ParamField path="key" type="atom">
+  The assign key.
+</ParamField>
+
+<ParamField path="fun" type="function">
+  Function returning the value (0 or 1 arity).
+</ParamField>
+
+### update/3
+
+Updates an existing key with a function.
+
+```elixir
+update(assigns, :count, &(&1 + 1))
+```
+
+<ParamField path="assigns" type="map">
+  The assigns map.
+</ParamField>
+
+<ParamField path="key" type="atom">
+  The assign key to update.
+</ParamField>
+
+<ParamField path="fun" type="function">
+  Function receiving current value (and optionally assigns) returning updated value.
+</ParamField>
+
+### changed?/2
+
+Checks if the given key changed in assigns.
+
+```elixir
+changed?(assigns, :count)
+```
+
+<ParamField path="assigns" type="map">
+  The assigns map.
+</ParamField>
+
+<ParamField path="key" type="atom">
+  The assign key to check.
+</ParamField>
+
+<ResponseField name="return" type="boolean">
+  `true` if the key changed, `false` otherwise.
+</ResponseField>
+
+### render_slot/2
+
+Renders a slot entry with optional argument.
+
+```elixir
+render_slot(@inner_block)
+render_slot(@column, row)
+```
+
+<ParamField path="slot" type="list | map">
+  The slot to render.
+</ParamField>
+
+<ParamField path="argument" type="any" default="nil">
+  Optional argument passed to the slot.
+</ParamField>
+
+<ResponseField name="return" type="rendered | nil">
+  Rendered slot content, or `nil` if slot has no entries.
+</ResponseField>
+
+### to_form/2
+
+Converts a data structure to a `Phoenix.HTML.Form`.
+
+```elixir
+to_form(%{"email" => "user@example.com"})
+to_form(changeset, action: :validate)
+```
+
+<ParamField path="data" type="map | changeset | form">
+  The source data for the form.
+</ParamField>
+
+<ParamField path="options" type="keyword" default="[]">
+  Options:
+  - `:as` - Name prefix for form inputs
+  - `:id` - ID prefix for form inputs
+  - `:errors` - Keyword list of errors
+  - `:action` - Form action (`:validate`, `:save`, etc.)
+</ParamField>
+
+<ResponseField name="return" type="Phoenix.HTML.Form.t()">
+  Form struct for use in templates.
+</ResponseField>
+
+### used_input?/1
+
+Checks if the input field was used by the client.
+
+```elixir
+used_input?(@form[:email])
+```
+
+<ParamField path="field" type="Phoenix.HTML.FormField.t()">
+  The form field to check.
+</ParamField>
+
+<ResponseField name="return" type="boolean">
+  `true` if field was focused, interacted with, or submitted.
+</ResponseField>
+
+### live_render/3
+
+Renders a LiveView within a template.
+
+```elixir
+live_render(@conn, MyApp.ThermostatLive)
+live_render(@socket, MyApp.ThermostatLive, id: "thermostat")
+```
+
+<ParamField path="conn_or_socket" type="Plug.Conn.t() | Socket.t()">
+  Connection or parent LiveView socket.
+</ParamField>
+
+<ParamField path="view" type="atom">
+  The LiveView module to render.
+</ParamField>
+
+<ParamField path="opts" type="keyword" default="[]">
+  Options:
+  - `:session` - Extra session data
+  - `:container` - Container tag and attributes
+  - `:id` - Unique DOM and LiveView ID (required for child LiveViews)
+  - `:sticky` - Maintain across live redirects
+</ParamField>
+
+### assigns_to_attributes/2
+
+Filters assigns as a keyword list for use in dynamic tag attributes.
+
+```elixir
+assigns_to_attributes(assigns, [:to, :new_window])
+```
+
+<ParamField path="assigns" type="map">
+  The assigns map.
+</ParamField>
+
+<ParamField path="exclude" type="list" default="[]">
+  List of keys to exclude.
+</ParamField>
+
+<ResponseField name="return" type="keyword">
+  Filtered assigns as keyword list.
+</ResponseField>
+
+## Built-in Components
+
+### live_component/1
+
+Renders a `Phoenix.LiveComponent` within a parent LiveView.
+
+```heex
+<.live_component module={MyApp.WeatherComponent} id="thermostat" city="Kraków" />
+```
+
+<ParamField path="module" type="atom" required>
+  The LiveComponent module to render.
+</ParamField>
+
+<ParamField path="id" type="string" required>
+  A unique identifier for the LiveComponent.
+</ParamField>
+
+Any additional attributes are passed to the LiveComponent as assigns.
+
+### live_title/1
+
+Renders a title with automatic prefix/suffix on `@page_title` updates.
+
+```heex
+<.live_title default="Welcome" prefix="MyApp · ">
+  {assigns[:page_title]}
+</.live_title>
+```
+
+<ParamField path="prefix" type="string" default="nil">
+  A prefix added before the content.
+</ParamField>
+
+<ParamField path="suffix" type="string" default="nil">
+  A suffix added after the content.
+</ParamField>
+
+<ParamField path="default" type="string" default="nil">
+  The default title to use if inner block is empty.
+</ParamField>
+
+### form/1
+
+Renders a form.
+
+```heex
+<.form for={@form} id="my-form" phx-change="validate" phx-submit="save">
+  <.input field={@form[:email]} />
+</.form>
+```
+
+<ParamField path="for" type="form | map | changeset" required>
+  The form source data.
+</ParamField>
+
+<ParamField path="action" type="string">
+  The action to submit the form to (required for non-LiveView forms).
+</ParamField>
+
+<ParamField path="as" type="atom">
+  The prefix for input names and IDs.
+</ParamField>
+
+<ParamField path="csrf_token" type="any">
+  CSRF token (auto-generated for POST actions).
+</ParamField>
+
+<ParamField path="method" type="string">
+  The HTTP method (only used with `:action`).
+</ParamField>
+
+<ParamField path="multipart" type="boolean" default="false">
+  Sets `enctype` to `multipart/form-data` for file uploads.
+</ParamField>
+
+### inputs_for/1
+
+Renders nested form inputs for associations or embeds.
+
+```heex
+<.inputs_for :let={f_nested} field={@form[:emails]}>
+  <.input type="text" field={f_nested[:email]} />
+</.inputs_for>
+```
+
+<ParamField path="field" type="Phoenix.HTML.FormField.t()" required>
+  The form field for the association or embed.
+</ParamField>
+
+## Upload Components
+
+### upload_errors/1
+
+Returns errors for the upload as a whole.
+
+```heex
+<div :for={err <- upload_errors(@uploads.avatar)}>
+  {upload_error_to_string(err)}
+</div>
+```
+
+<ParamField path="upload" type="Phoenix.LiveView.UploadConfig.t()">
+  The upload configuration.
+</ParamField>
+
+<ResponseField name="return" type="list">
+  List of error atoms (e.g., `:too_many_files`).
+</ResponseField>
+
+### upload_errors/2
+
+Returns errors for a specific upload entry.
+
+```heex
+<div :for={entry <- @uploads.avatar.entries}>
+  <div :for={err <- upload_errors(@uploads.avatar, entry)}>
+    {upload_error_to_string(err)}
+  </div>
+</div>
+```
+
+<ParamField path="upload" type="Phoenix.LiveView.UploadConfig.t()">
+  The upload configuration.
+</ParamField>
+
+<ParamField path="entry" type="Phoenix.LiveView.UploadEntry.t()">
+  The upload entry.
+</ParamField>
+
+<ResponseField name="return" type="list">
+  List of error atoms (e.g., `:too_large`, `:not_accepted`).
+</ResponseField>

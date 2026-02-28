@@ -1,0 +1,504 @@
+---
+title: "Telemetry Events"
+description: "Monitor and measure LiveView performance with telemetry events"
+---
+
+LiveView emits comprehensive [telemetry](https://hexdocs.pm/telemetry) events throughout its lifecycle, allowing you to monitor performance, track errors, and gather metrics.
+
+## Event Overview
+
+LiveView emits telemetry events for:
+- LiveView lifecycle callbacks (mount, handle_params, handle_event, render)
+- LiveComponent lifecycle callbacks (update, handle_event)
+- Component destruction
+
+Each callback typically has three events: `:start`, `:stop`, and `:exception`.
+
+## LiveView Events
+
+### Mount Events
+
+#### `[:phoenix, :live_view, :mount, :start]`
+
+Dispatched immediately before `mount/3` is invoked.
+
+**Measurement:**
+```elixir
+%{system_time: System.monotonic_time()}
+```
+
+**Metadata:**
+```elixir
+%{
+  socket: Phoenix.LiveView.Socket.t(),
+  params: unsigned_params | :not_mounted_at_router,
+  session: map,
+  uri: String.t() | nil
+}
+```
+
+#### `[:phoenix, :live_view, :mount, :stop]`
+
+Dispatched when `mount/3` completes successfully.
+
+**Measurement:**
+```elixir
+%{duration: native_time}
+```
+
+**Metadata:**
+```elixir
+%{
+  socket: Phoenix.LiveView.Socket.t(),
+  params: unsigned_params | :not_mounted_at_router,
+  session: map,
+  uri: String.t() | nil
+}
+```
+
+#### `[:phoenix, :live_view, :mount, :exception]`
+
+Dispatched when an exception is raised in `mount/3`.
+
+**Measurement:**
+```elixir
+%{duration: native_time}
+```
+
+**Metadata:**
+```elixir
+%{
+  socket: Phoenix.LiveView.Socket.t(),
+  kind: atom,
+  reason: term,
+  params: unsigned_params | :not_mounted_at_router,
+  session: map,
+  uri: String.t() | nil
+}
+```
+
+### Handle Params Events
+
+#### `[:phoenix, :live_view, :handle_params, :start]`
+
+Dispatched immediately before `handle_params/3` is invoked.
+
+**Measurement:**
+```elixir
+%{system_time: System.monotonic_time()}
+```
+
+**Metadata:**
+```elixir
+%{
+  socket: Phoenix.LiveView.Socket.t(),
+  params: unsigned_params,
+  uri: String.t()
+}
+```
+
+#### `[:phoenix, :live_view, :handle_params, :stop]`
+
+Dispatched when `handle_params/3` completes successfully.
+
+**Measurement:**
+```elixir
+%{duration: native_time}
+```
+
+#### `[:phoenix, :live_view, :handle_params, :exception]`
+
+Dispatched when an exception is raised in `handle_params/3`.
+
+**Metadata includes:** `kind`, `reason`, and other standard fields.
+
+### Handle Event Events
+
+#### `[:phoenix, :live_view, :handle_event, :start]`
+
+Dispatched immediately before `handle_event/3` is invoked.
+
+**Metadata:**
+```elixir
+%{
+  socket: Phoenix.LiveView.Socket.t(),
+  event: String.t(),
+  params: unsigned_params
+}
+```
+
+#### `[:phoenix, :live_view, :handle_event, :stop]`
+
+Dispatched when `handle_event/3` completes successfully.
+
+#### `[:phoenix, :live_view, :handle_event, :exception]`
+
+Dispatched when an exception is raised in `handle_event/3`.
+
+### Render Events
+
+#### `[:phoenix, :live_view, :render, :start]`
+
+Dispatched immediately before `render/1` is invoked.
+
+**Metadata:**
+```elixir
+%{
+  socket: Phoenix.LiveView.Socket.t(),
+  force?: boolean,
+  changed?: boolean
+}
+```
+
+#### `[:phoenix, :live_view, :render, :stop]`
+
+Dispatched when `render/1` completes successfully.
+
+**Measurement:**
+```elixir
+%{duration: native_time}
+```
+
+#### `[:phoenix, :live_view, :render, :exception]`
+
+Dispatched when an exception is raised in `render/1`.
+
+## LiveComponent Events
+
+### Update Events
+
+#### `[:phoenix, :live_component, :update, :start]`
+
+Dispatched immediately before `update/2` or `update_many/1` is invoked.
+
+**Metadata:**
+```elixir
+%{
+  socket: Phoenix.LiveView.Socket.t(),
+  component: atom,
+  assigns_sockets: [{map(), Phoenix.LiveView.Socket.t()}]
+}
+```
+
+<Note>
+For `update/2`, this might dispatch one event for multiple calls.
+</Note>
+
+#### `[:phoenix, :live_component, :update, :stop]`
+
+Dispatched when `update/2` or `update_many/1` completes successfully.
+
+**Metadata:**
+```elixir
+%{
+  socket: Phoenix.LiveView.Socket.t(),
+  component: atom,
+  assigns_sockets: [{map(), Phoenix.LiveView.Socket.t()}],
+  sockets: [Phoenix.LiveView.Socket.t()]
+}
+```
+
+The `sockets` metadata contains the updated sockets.
+
+#### `[:phoenix, :live_component, :update, :exception]`
+
+Dispatched when an exception is raised in `update/2` or `update_many/1`.
+
+### Handle Event Events
+
+#### `[:phoenix, :live_component, :handle_event, :start]`
+
+Dispatched immediately before `handle_event/3` is invoked on a component.
+
+**Metadata:**
+```elixir
+%{
+  socket: Phoenix.LiveView.Socket.t(),
+  component: atom,
+  event: String.t(),
+  params: unsigned_params
+}
+```
+
+#### `[:phoenix, :live_component, :handle_event, :stop]`
+
+Dispatched when component `handle_event/3` completes successfully.
+
+#### `[:phoenix, :live_component, :handle_event, :exception]`
+
+Dispatched when an exception is raised in component `handle_event/3`.
+
+### Destroyed Event
+
+#### `[:phoenix, :live_component, :destroyed]`
+
+Dispatched after a LiveComponent is destroyed. No measurement.
+
+**Metadata:**
+```elixir
+%{
+  socket: Phoenix.LiveView.Socket.t(),
+  component: atom,
+  cid: integer(),
+  live_view_socket: Phoenix.LiveView.Socket.t()
+}
+```
+
+## Setting Up Telemetry
+
+### Basic Telemetry Handler
+
+Attach a handler in your application start:
+
+```elixir
+# lib/my_app/application.ex
+def start(_type, _args) do
+  :telemetry.attach_many(
+    "my-app-telemetry",
+    [
+      [:phoenix, :live_view, :mount, :start],
+      [:phoenix, :live_view, :mount, :stop],
+      [:phoenix, :live_view, :mount, :exception]
+    ],
+    &MyApp.Telemetry.handle_event/4,
+    nil
+  )
+  
+  # ... rest of your application setup
+end
+```
+
+### Handler Implementation
+
+```elixir
+# lib/my_app/telemetry.ex
+defmodule MyApp.Telemetry do
+  require Logger
+
+  def handle_event([:phoenix, :live_view, :mount, :start], measurements, metadata, _config) do
+    Logger.info("LiveView mounting: #{inspect(metadata.socket.view)}")
+  end
+
+  def handle_event([:phoenix, :live_view, :mount, :stop], measurements, metadata, _config) do
+    duration_ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
+    Logger.info("LiveView mounted in #{duration_ms}ms: #{inspect(metadata.socket.view)}")
+  end
+
+  def handle_event([:phoenix, :live_view, :mount, :exception], measurements, metadata, _config) do
+    Logger.error("""
+    LiveView mount failed: #{inspect(metadata.socket.view)}
+    Reason: #{inspect(metadata.reason)}
+    Kind: #{metadata.kind}
+    """)
+  end
+end
+```
+
+## Common Use Cases
+
+### Performance Monitoring
+
+Track slow LiveView operations:
+
+```elixir
+def handle_event([:phoenix, :live_view, :mount, :stop], %{duration: duration}, metadata, _) do
+  duration_ms = System.convert_time_unit(duration, :native, :millisecond)
+  
+  if duration_ms > 1000 do
+    Logger.warning("""
+    Slow mount detected: #{inspect(metadata.socket.view)}
+    Duration: #{duration_ms}ms
+    URI: #{metadata.uri}
+    """)
+  end
+end
+```
+
+### Error Tracking
+
+Send exceptions to external monitoring services:
+
+```elixir
+def handle_event([:phoenix, :live_view | _] = event, _measurements, metadata, _config) do
+  if List.last(event) == :exception do
+    Sentry.capture_exception(
+      metadata.reason,
+      stacktrace: metadata.stacktrace,
+      extra: %{
+        live_view: inspect(metadata.socket.view),
+        event: event
+      }
+    )
+  end
+end
+```
+
+### Metrics Collection
+
+Collect metrics with Telemetry.Metrics:
+
+```elixir
+# lib/my_app/telemetry.ex
+def metrics do
+  [
+    # LiveView mount duration
+    summary("phoenix.live_view.mount.duration",
+      unit: {:native, :millisecond},
+      tags: [:view]
+    ),
+    
+    # Event handling duration
+    summary("phoenix.live_view.handle_event.duration",
+      unit: {:native, :millisecond},
+      tags: [:view, :event]
+    ),
+    
+    # Render duration
+    summary("phoenix.live_view.render.duration",
+      unit: {:native, :millisecond},
+      tags: [:view]
+    ),
+    
+    # Exception count
+    counter("phoenix.live_view.mount.exception.count",
+      tags: [:view]
+    )
+  ]
+end
+```
+
+### Adding Custom Tags
+
+Extract useful information for grouping:
+
+```elixir
+def handle_event(event, measurements, metadata, _config) do
+  tags = %{
+    view: inspect(metadata.socket.view),
+    connected: Phoenix.LiveView.connected?(metadata.socket)
+  }
+  
+  :telemetry.execute(event ++ [:custom], measurements, Map.merge(metadata, tags))
+end
+```
+
+## Integration with Monitoring Services
+
+### AppSignal
+
+```elixir
+Appsignal.Telemetry.attach([
+  [:phoenix, :live_view, :mount, :start],
+  [:phoenix, :live_view, :mount, :stop],
+  [:phoenix, :live_view, :mount, :exception]
+])
+```
+
+### Prometheus
+
+```elixir
+TelemetryMetricsPrometheus.init(
+  metrics: MyApp.Telemetry.metrics(),
+  port: 9568
+)
+```
+
+### StatsD
+
+```elixir
+TelemetryMetricsStatsd.start_link(
+  metrics: MyApp.Telemetry.metrics(),
+  host: "localhost",
+  port: 8125
+)
+```
+
+## Best Practices
+
+1. **Filter events**: Only attach handlers for events you need
+2. **Use tags**: Add meaningful tags to group and filter metrics
+3. **Monitor performance**: Track mount, event, and render durations
+4. **Track exceptions**: Send errors to monitoring services
+5. **Set thresholds**: Alert on slow operations or high error rates
+6. **Use Telemetry.Metrics**: For standardized metric definitions
+7. **Test handlers**: Ensure telemetry handlers don't crash
+8. **Keep handlers fast**: Don't block the LiveView process
+
+## Example: Complete Telemetry Setup
+
+```elixir
+defmodule MyApp.Telemetry do
+  use Supervisor
+  import Telemetry.Metrics
+
+  def start_link(arg) do
+    Supervisor.start_link(__MODULE__, arg, name: __MODULE__)
+  end
+
+  def init(_arg) do
+    children = [
+      {:telemetry_poller, measurements: periodic_measurements(), period: 10_000},
+      {TelemetryMetricsPrometheus, metrics: metrics()}
+    ]
+
+    Supervisor.init(children, strategy: :one_for_one)
+  end
+
+  def metrics do
+    [
+      # LiveView metrics
+      summary("phoenix.live_view.mount.duration",
+        unit: {:native, :millisecond},
+        tags: [:view, :connected]
+      ),
+      summary("phoenix.live_view.handle_event.duration",
+        unit: {:native, :millisecond},
+        tags: [:view, :event]
+      ),
+      summary("phoenix.live_view.render.duration",
+        unit: {:native, :millisecond},
+        tags: [:view]
+      ),
+      
+      # Exception counters
+      counter("phoenix.live_view.mount.exception.count", tags: [:view]),
+      counter("phoenix.live_view.handle_event.exception.count", tags: [:view, :event]),
+      
+      # LiveComponent metrics
+      summary("phoenix.live_component.update.duration",
+        unit: {:native, :millisecond},
+        tags: [:component]
+      ),
+      counter("phoenix.live_component.destroyed.count", tags: [:component])
+    ]
+  end
+
+  defp periodic_measurements do
+    []
+  end
+end
+```
+
+## Debugging with Telemetry
+
+Use telemetry events for debugging in development:
+
+```elixir
+if Mix.env() == :dev do
+  :telemetry.attach_many(
+    "debug-telemetry",
+    [
+      [:phoenix, :live_view, :mount, :start],
+      [:phoenix, :live_view, :handle_event, :start]
+    ],
+    fn event, measurements, metadata, _config ->
+      IO.puts("""
+      Event: #{inspect(event)}
+      View: #{inspect(metadata.socket.view)}
+      Measurements: #{inspect(measurements)}
+      """)
+    end,
+    nil
+  )
+end
+```

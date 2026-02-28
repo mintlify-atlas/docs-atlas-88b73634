@@ -1,0 +1,313 @@
+---
+title: "Async Operations"
+description: "Handle asynchronous work with assign_async, start_async, and AsyncResult"
+---
+
+Performing asynchronous work is common in LiveViews and LiveComponents. It allows the user to get a working UI quickly while the system fetches data in the background or talks to an external service, without blocking the render or event handling.
+
+## Why Async Operations?
+
+Async operations help you:
+- Provide immediate feedback to users
+- Handle different states (loading, error, success)
+- Catch errors without crashing the user experience
+- Prevent blocking the LiveView process
+
+## Async Assigns with `assign_async/3`
+
+The `assign_async/3` function is the recommended way to perform async work in LiveView. It automatically handles:
+- Task management and lifecycle
+- Loading, error, and success states
+- Process isolation and error handling
+
+### Basic Usage
+
+<Steps>
+  <Step title="Call assign_async in mount">
+    Pass the socket, a key (or list of keys), and a function that returns `{:ok, assigns}` or `{:error, reason}`.
+  </Step>
+  <Step title="Render the async state">
+    Use the `AsyncResult` struct in your template to show loading, error, and success states.
+  </Step>
+</Steps>
+
+```elixir
+def mount(%{"slug" => slug}, _session, socket) do
+  {:ok,
+   socket
+   |> assign(:foo, "bar")
+   |> assign_async(:org, fn -> {:ok, %{org: fetch_org!(slug)}} end)}
+end
+```
+
+<Warning>
+Never pass the socket into the async function! It will copy the whole socket struct to the Task process, which is very expensive.
+
+**Bad:**
+```elixir
+assign_async(:org, fn -> {:ok, %{org: fetch_org(socket.assigns.slug)}} end)
+```
+
+**Good:**
+```elixir
+slug = socket.assigns.slug
+assign_async(:org, fn -> {:ok, %{org: fetch_org(slug)}} end)
+```
+</Warning>
+
+### Multiple Async Assigns
+
+You can load multiple assigns in a single async operation:
+
+```elixir
+def mount(%{"slug" => slug}, _, socket) do
+  {:ok,
+   socket
+   |> assign_async(:org, fn -> {:ok, %{org: fetch_org!(slug)}} end)
+   |> assign_async([:profile, :rank], fn ->
+     {:ok, %{profile: fetch_profile!(), rank: fetch_rank!()}}
+   end)}
+end
+```
+
+## Rendering Async Results
+
+The state of the async operation is stored as a `Phoenix.LiveView.AsyncResult` struct in socket assigns. It carries the loading and failed states, as well as the result.
+
+### AsyncResult Fields
+
+- `:ok?` - When true, indicates the `:result` has been set successfully at least once
+- `:loading` - The current loading state (truthy when loading)
+- `:failed` - The current failed state (contains error reason when failed)
+- `:result` - The successful result of the async task
+
+### Manual Rendering
+
+Conditionally render states in your template:
+
+```heex
+<div :if={@org.loading}>Loading organization...</div>
+<div :if={org = @org.ok? && @org.result}>{org.name} loaded!</div>
+<div :if={@org.failed}>Error loading organization</div>
+```
+
+### Using the `async_result` Component
+
+The `Phoenix.Component.async_result/1` function component provides a declarative way to render different states:
+
+```heex
+<.async_result :let={org} assign={@org}>
+  <:loading>Loading organization...</:loading>
+  <:failed :let={_failure}>There was an error loading the organization</:failed>
+  {org.name}
+</.async_result>
+```
+
+## Arbitrary Async Operations with `start_async/3`
+
+For lower-level control of asynchronous operations, use `start_async/3` with the `handle_async/3` callback.
+
+### Example: Custom Async Handling
+
+```elixir
+def mount(%{"id" => id}, _, socket) do
+  {:ok,
+   socket
+   |> assign(:org, AsyncResult.loading())
+   |> start_async(:my_task, fn -> fetch_org!(id) end)}
+end
+
+def handle_async(:my_task, {:ok, fetched_org}, socket) do
+  %{org: org} = socket.assigns
+  {:noreply, assign(socket, :org, AsyncResult.ok(org, fetched_org))}
+end
+
+def handle_async(:my_task, {:exit, reason}, socket) do
+  %{org: org} = socket.assigns
+  {:noreply, assign(socket, :org, AsyncResult.failed(org, {:exit, reason}))}
+end
+```
+
+<Info>
+The `handle_async/3` callback is called when the task completes or exits, with results wrapped in either `{:ok, result}` or `{:exit, reason}`.
+</Info>
+
+## AsyncResult Module Functions
+
+The `Phoenix.LiveView.AsyncResult` module provides helper functions for managing async state:
+
+### Creating States
+
+```elixir
+# Create loading state
+AsyncResult.loading()
+AsyncResult.loading(%{my: :custom_state})
+
+# Create success state
+AsyncResult.ok("result")
+AsyncResult.ok(async_result, "new result")
+
+# Create failed state
+AsyncResult.failed(async_result, {:error, "reason"})
+```
+
+### Updating States
+
+```elixir
+# Update to loading
+result = AsyncResult.loading(result)
+result = AsyncResult.loading(result, %{page: 2})
+
+# Update to success
+result = AsyncResult.ok(result, data)
+
+# Update to failed
+result = AsyncResult.failed(result, reason)
+```
+
+## Canceling Async Operations
+
+You can cancel ongoing async operations using `cancel_async/3`:
+
+```elixir
+def handle_event("cancel", _params, socket) do
+  {:noreply, cancel_async(socket, :my_task)}
+end
+```
+
+You can also cancel using the `AsyncResult` struct:
+
+```elixir
+def handle_event("cancel", _params, socket) do
+  {:noreply, cancel_async(socket, socket.assigns.org, :cancelled)}
+end
+```
+
+## Advanced Options
+
+### Task Supervisor
+
+You can run async tasks under a supervisor:
+
+```elixir
+assign_async(socket, :org, [supervisor: MyApp.TaskSupervisor], fn ->
+  {:ok, %{org: fetch_org!(slug)}}
+end)
+```
+
+### Reset on Reload
+
+By default, if an async assign already has a successful result, reloading will show the old result while loading new data. You can force a reset:
+
+```elixir
+# Reset all assigns
+assign_async(socket, :org, [reset: true], fn ->
+  {:ok, %{org: fetch_org!(slug)}}
+end)
+
+# Reset specific assigns
+assign_async(socket, [:profile, :rank], [reset: [:profile]], fn ->
+  {:ok, %{profile: fetch_profile!(), rank: fetch_rank!()}}
+end)
+```
+
+## Complete Example
+
+```elixir
+defmodule MyAppWeb.OrgLive do
+  use MyAppWeb, :live_view
+  alias Phoenix.LiveView.AsyncResult
+
+  def mount(%{"slug" => slug}, _session, socket) do
+    {:ok,
+     socket
+     |> assign(:slug, slug)
+     |> assign_async(:org, fn -> load_org(slug) end)}
+  end
+
+  def handle_event("reload", _params, socket) do
+    slug = socket.assigns.slug
+    {:noreply, assign_async(socket, :org, fn -> load_org(slug) end)}
+  end
+
+  def handle_event("cancel", _params, socket) do
+    {:noreply, cancel_async(socket, :org)}
+  end
+
+  defp load_org(slug) do
+    case MyApp.Organizations.get_by_slug(slug) do
+      {:ok, org} -> {:ok, %{org: org}}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  def render(assigns) do
+    ~H"""
+    <div>
+      <.async_result :let={org} assign={@org}>
+        <:loading>Loading organization...</:loading>
+        <:failed :let={failure}>
+          <p>Error: {inspect(failure)}</p>
+          <button phx-click="reload">Retry</button>
+        </:failed>
+        <div>
+          <h1>{org.name}</h1>
+          <p>{org.description}</p>
+        </div>
+      </.async_result>
+    </div>
+    """
+  end
+end
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Extract data before async">
+    Always extract assigns before passing them to async functions to avoid copying the socket.
+  </Step>
+  <Step title="Use assign_async for simple cases">
+    Prefer `assign_async/3` over `start_async/3` unless you need custom handling.
+  </Step>
+  <Step title="Handle all states">
+    Always handle loading, success, and error states in your UI.
+  </Step>
+  <Step title="Tasks run only when connected">
+    Async tasks only start when the socket is connected, not during the initial HTTP render.
+  </Step>
+  <Step title="Return proper tuples">
+    Always return `{:ok, map}` or `{:error, reason}` from your async functions.
+  </Step>
+</Steps>
+
+## Common Pitfalls
+
+<Warning>
+**Accessing socket in async function**
+
+This copies the entire socket to the task process:
+```elixir
+# Bad
+assign_async(:data, fn -> {:ok, %{data: fetch(socket.assigns.id)}} end)
+
+# Good
+id = socket.assigns.id
+assign_async(:data, fn -> {:ok, %{data: fetch(id)}} end)
+```
+</Warning>
+
+<Warning>
+**Using send_update inside assign_async**
+
+Since `assign_async` runs in a separate process, `send_update/3` won't work. Instead, send a message to the LiveView:
+
+```elixir
+lv_pid = self()
+assign_async(socket, :org, fn ->
+  org = fetch_org!()
+  send(lv_pid, {:org_loaded, org})
+  {:ok, %{org: org}}
+end)
+```
+</Warning>

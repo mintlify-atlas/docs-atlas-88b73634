@@ -1,0 +1,206 @@
+---
+title: Testing Overview
+description: Learn how to test Phoenix LiveView applications
+---
+
+Phoenix LiveView provides comprehensive testing utilities that allow you to test both stateless function components and stateful LiveViews and LiveComponents. The testing approach mimics browser behavior while running entirely in your test process.
+
+## Testing Philosophy
+
+LiveView testing is designed to:
+
+- **Simulate browser behavior** - Tests communicate with LiveView processes just like a browser would
+- **Test the full lifecycle** - Support testing both disconnected and connected mount states
+- **Validate rendered output** - Assert on HTML content and DOM structure
+- **Interact with events** - Trigger click, submit, change, and other events
+- **Handle navigation** - Test patches, redirects, and live navigation
+
+## Test Setup
+
+To test LiveViews, import the necessary modules in your test files:
+
+```elixir
+defmodule MyAppWeb.ThermoLiveTest do
+  use ExUnit.Case, async: true
+
+  import Plug.Conn
+  import Phoenix.ConnTest
+  import Phoenix.LiveViewTest
+
+  @endpoint MyAppWeb.Endpoint
+
+  setup do
+    {:ok, conn: Plug.Test.init_test_session(build_conn(), %{})}
+  end
+end
+```
+
+<Note>
+The `@endpoint` module attribute is required for LiveView test macros to work properly.
+</Note>
+
+## What Can You Test?
+
+LiveView's testing utilities support:
+
+<Steps>
+
+### Function Components
+
+Test stateless components with `render_component/3` or the `~H` sigil with `rendered_to_string/1`.
+
+### LiveViews
+
+Test full LiveView lifecycle including mount, events, navigation, and async operations.
+
+### LiveComponents
+
+Test stateful components either in isolation or within a parent LiveView.
+
+### Forms and Validation
+
+Test form submissions, validations, and change events with proper field validation.
+
+### File Uploads
+
+Test file uploads including progress tracking, validation, and consumption.
+
+### Navigation
+
+Test live patches, live navigation, and regular redirects.
+
+</Steps>
+
+## Quick Example
+
+Here's a complete example testing a simple counter LiveView:
+
+```elixir
+test "increments and decrements counter", %{conn: conn} do
+  # Mount the LiveView
+  {:ok, view, html} = live(conn, "/counter")
+  
+  # Assert initial state
+  assert html =~ "Count: 0"
+  
+  # Trigger increment event
+  assert view
+         |> element("button", "Increment")
+         |> render_click() =~ "Count: 1"
+  
+  # Trigger decrement event
+  assert view
+         |> element("button", "Decrement")
+         |> render_click() =~ "Count: 0"
+end
+```
+
+## Testing Workflow
+
+A typical LiveView test follows this pattern:
+
+<Steps>
+
+### Mount the LiveView
+
+Use `live/2` to start the LiveView process and get the initial HTML.
+
+### Assert Initial State
+
+Verify the initial render shows the expected content.
+
+### Interact with Elements
+
+Trigger events using `render_click/2`, `render_submit/2`, etc.
+
+### Assert Updated State
+
+Verify the rendered output reflects the state changes.
+
+### Test Navigation
+
+Test patches and redirects with `assert_patch/2`, `assert_redirect/2`.
+
+</Steps>
+
+## Disconnected vs Connected Mounts
+
+LiveViews have a two-phase lifecycle:
+
+1. **Disconnected mount** - Initial HTTP request renders static HTML
+2. **Connected mount** - WebSocket connects and LiveView becomes stateful
+
+You can test both phases separately or together:
+
+```elixir
+# Test both phases separately
+test "disconnected and connected mount", %{conn: conn} do
+  # Disconnected mount
+  conn = get(conn, "/thermo")
+  assert html_response(conn, 200) =~ "The temp is: 0"
+  
+  # Connected mount
+  {:ok, view, html} = live(conn)
+  assert html =~ "The temp is: 1"
+end
+
+# Test connected mount in one step (recommended)
+test "connected mount", %{conn: conn} do
+  {:ok, view, html} = live(conn, "/thermo")
+  assert html =~ "The temp is: 1"
+end
+```
+
+<Tip>
+For most tests, use `live(conn, path)` to mount in a single step. Only test both phases separately when you need to verify different behavior in each state.
+</Tip>
+
+## Testing Isolated LiveViews
+
+For LiveViews that aren't routable (like reusable components), use `live_isolated/3`:
+
+```elixir
+test "isolated LiveView", %{conn: conn} do
+  {:ok, view, html} = 
+    live_isolated(conn, MyAppWeb.ClockLive, session: %{"tz" => "EST"})
+  
+  assert html =~ "Eastern Time"
+end
+```
+
+## Error Handling
+
+LiveView tests can detect errors like duplicate IDs:
+
+```elixir
+test "detects duplicate IDs", %{conn: conn} do
+  Process.flag(:trap_exit, true)
+  
+  {:ok, view, _html} = live(conn, "/duplicate-id")
+  
+  assert catch_exit(render(view))
+  assert_receive {:EXIT, _pid, {exception, _}}
+  assert Exception.message(exception) =~ "Duplicate id found"
+end
+```
+
+You can control error behavior with the `:on_error` option:
+
+```elixir
+# Raise errors (default)
+{:ok, view, _html} = live(conn, "/path", on_error: :raise)
+
+# Log warnings instead
+{:ok, view, _html} = live(conn, "/path", on_error: :warn)
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Testing LiveViews" icon="browser" href="/testing/liveview-tests">
+    Learn how to test LiveView mounting, events, and navigation
+  </Card>
+  <Card title="Testing Components" icon="puzzle-piece" href="/testing/component-tests">
+    Test function components and LiveComponents
+  </Card>
+</CardGroup>

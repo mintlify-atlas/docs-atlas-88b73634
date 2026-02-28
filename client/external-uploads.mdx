@@ -1,0 +1,468 @@
+---
+title: "External Uploads"
+description: "Upload files directly to cloud storage providers like S3, Google Cloud, and more"
+---
+
+Phoenix LiveView supports uploading files directly to external cloud providers without routing through your server, using the `:external` option in `allow_upload/3`.
+
+<Note>
+This guide continues from the configuration in the server [Uploads guide](https://hexdocs.pm/phoenix_live_view/uploads.html).
+</Note>
+
+## Overview
+
+External uploads work by:
+
+1. Server generates pre-signed URL or upload metadata
+2. Client receives metadata via the `:external` callback
+3. JavaScript uploader sends files directly to cloud provider
+4. Progress and completion reported back to LiveView
+
+## Chunked HTTP Uploads (UpChunk)
+
+For services supporting chunked uploads with `Content-Range` headers, use the UpChunk library.
+
+### 1. Install UpChunk
+
+<Tabs>
+  <Tab title="NPM">
+    ```bash
+    npm install --prefix assets --save @mux/upchunk
+    ```
+  </Tab>
+  <Tab title="Manual">
+    Save [upchunk.js](https://unpkg.com/@mux/upchunk@2) to `assets/vendor/upchunk.js`
+  </Tab>
+</Tabs>
+
+### 2. Configure Upload on Server
+
+```elixir
+def mount(_params, _session, socket) do
+  {:ok,
+   socket
+   |> assign(:uploaded_files, [])
+   |> allow_upload(:avatar, 
+       accept: :any, 
+       max_entries: 3, 
+       external: &presign_upload/2)}
+end
+
+defp presign_upload(entry, socket) do
+  {:ok, %{"Location" => link}} =
+    SomeTube.start_session(%{
+      "uploadType" => "resumable",
+      "x-upload-content-length" => entry.client_size
+    })
+
+  {:ok, %{uploader: "UpChunk", entrypoint: link}, socket}
+end
+```
+
+### 3. Setup Client Uploader
+
+```javascript
+import * as UpChunk from "@mux/upchunk"
+
+let Uploaders = {}
+
+Uploaders.UpChunk = function(entries, onViewError){
+  entries.forEach(entry => {
+    // Create upload session
+    let { file, meta: { entrypoint } } = entry
+    let upload = UpChunk.createUpload({ 
+      endpoint: entrypoint, 
+      file 
+    })
+
+    // Stop on view error
+    onViewError(() => upload.pause())
+
+    // Handle upload errors
+    upload.on("error", (e) => entry.error(e.detail.message))
+
+    // Report progress
+    upload.on("progress", (e) => {
+      if(e.detail < 100) { 
+        entry.progress(e.detail) 
+      }
+    })
+
+    // Complete upload
+    upload.on("success", () => entry.progress(100))
+  })
+}
+
+let liveSocket = new LiveSocket("/live", Socket, {
+  uploaders: Uploaders,
+  params: {_csrf_token: csrfToken}
+})
+```
+
+## Direct to S3
+
+For uploads up to 5 GB, use direct S3 PUT/POST requests.
+
+### Prerequisites
+
+<Tabs>
+  <Tab title="S3 Information">
+    - AWS Access Key ID
+    - AWS Secret Access Key
+    - Bucket Name
+    - Region
+  </Tab>
+  <Tab title="CORS Configuration">
+    ```json
+    [
+      {
+        "AllowedHeaders": ["*"],
+        "AllowedMethods": ["PUT", "POST"],
+        "AllowedOrigins": ["*"],
+        "ExposeHeaders": []
+      }
+    ]
+    ```
+  </Tab>
+</Tabs>
+
+See [AWS CORS documentation](https://docs.aws.amazon.com/AmazonS3/latest/userguide/ManageCorsUsing.html) for details.
+
+### 1. Server-Side Presigning
+
+<CodeGroup>
+
+```elixir LiveView
+def mount(_params, _session, socket) do
+  {:ok,
+    socket
+    |> assign(:uploaded_files, [])
+    |> allow_upload(:avatar, 
+        accept: :any, 
+        max_entries: 3, 
+        external: &presign_upload/2)}
+end
+
+def presign_upload(entry, socket) do
+  uploads = socket.assigns.uploads
+  bucket = "phx-upload-example"
+  key = "public/#{entry.client_name}"
+
+  config = %{
+    region: "us-east-1",
+    access_key_id: System.fetch_env!("AWS_ACCESS_KEY_ID"),
+    secret_access_key: System.fetch_env!("AWS_SECRET_ACCESS_KEY")
+  }
+
+  {:ok, fields} =
+    SimpleS3Upload.sign_form_upload(config, bucket,
+      key: key,
+      content_type: entry.client_type,
+      max_file_size: uploads[entry.upload_config].max_file_size,
+      expires_in: :timer.hours(1)
+    )
+
+  meta = %{
+    uploader: "S3", 
+    key: key, 
+    url: "http://#{bucket}.s3-#{config.region}.amazonaws.com", 
+    fields: fields
+  }
+  {:ok, meta, socket}
+end
+```
+
+```elixir SimpleS3Upload Module
+# Download from:
+# https://gist.github.com/chrismccord/37862f1f8b1f5148644b75d20d1cb073
+
+defmodule SimpleS3Upload do
+  # Zero-dependency S3 upload signing
+  # See gist for complete implementation
+end
+```
+
+</CodeGroup>
+
+<Tip>
+If you encounter `:crypto` module errors or S3 ACL blocks, see the [SimpleS3Upload gist](https://gist.github.com/chrismccord/37862f1f8b1f5148644b75d20d1cb073) comments for solutions.
+</Tip>
+
+### 2. Client-Side Uploader
+
+Create `assets/js/uploaders.js`:
+
+```javascript
+let Uploaders = {}
+
+Uploaders.S3 = function(entries, onViewError){
+  entries.forEach(entry => {
+    let formData = new FormData()
+    let {url, fields} = entry.meta
+    
+    // Add S3 fields
+    Object.entries(fields).forEach(([key, val]) => {
+      formData.append(key, val)
+    })
+    formData.append("file", entry.file)
+    
+    // Setup XHR
+    let xhr = new XMLHttpRequest()
+    onViewError(() => xhr.abort())
+    
+    xhr.onload = () => {
+      xhr.status === 204 ? entry.progress(100) : entry.error()
+    }
+    xhr.onerror = () => entry.error()
+    
+    // Track progress
+    xhr.upload.addEventListener("progress", (event) => {
+      if(event.lengthComputable){
+        let percent = Math.round((event.loaded / event.total) * 100)
+        if(percent < 100){ 
+          entry.progress(percent) 
+        }
+      }
+    })
+
+    xhr.open("POST", url, true)
+    xhr.send(formData)
+  })
+}
+
+export default Uploaders
+```
+
+### 3. Wire Up in app.js
+
+```javascript
+import Uploaders from "./uploaders"
+
+let liveSocket = new LiveSocket("/live", Socket, {
+  params: {_csrf_token: csrfToken},
+  uploaders: Uploaders
+})
+```
+
+<Note>
+The `uploader` key in the metadata ("S3") must match the uploader name in your JavaScript object.
+</Note>
+
+## S3-Compatible Services (PUT)
+
+For services like Cloudflare R2 that don't support POST multipart uploads:
+
+### Server-Side (with ExAws)
+
+```elixir
+def presign_upload(entry, socket) do
+  config = ExAws.Config.new(:s3)
+  bucket = "bucket"
+  key = "public/#{entry.client_name}"
+
+  {:ok, url} =
+    ExAws.S3.presigned_url(config, :put, bucket, key,
+      expires_in: 3600,
+      query_params: [{"Content-Type", entry.client_type}]
+    )
+    
+  {:ok, %{uploader: "S3", key: key, url: url}, socket}
+end
+```
+
+### Client-Side PUT Uploader
+
+```javascript
+Uploaders.S3 = function (entries, onViewError) {
+  entries.forEach(entry => {
+    let xhr = new XMLHttpRequest()
+    onViewError(() => xhr.abort())
+    
+    xhr.onload = () => {
+      xhr.status === 200 ? entry.progress(100) : entry.error()
+    }
+    xhr.onerror = () => entry.error()
+
+    xhr.upload.addEventListener("progress", (event) => {
+      if(event.lengthComputable){
+        let percent = Math.round((event.loaded / event.total) * 100)
+        if(percent < 100){ 
+          entry.progress(percent) 
+        }
+      }
+    })
+
+    let url = entry.meta.url
+    xhr.open("PUT", url, true)
+    xhr.send(entry.file)
+  })
+}
+```
+
+<Note>
+This approach requires [ExAws](https://hexdocs.pm/ex_aws/readme.html) and [ExAws.S3](https://hexdocs.pm/ex_aws_s3/ExAws.S3.html) properly configured.
+</Note>
+
+## Entry and Uploader API
+
+### Entry Object
+
+Provided to uploader functions:
+
+```javascript
+entry = {
+  file: File,              // The file object
+  meta: {                  // Metadata from server
+    uploader: "S3",
+    url: "https://...",
+    fields: {...}
+  },
+  progress: (percent) => {}, // Report progress (0-100)
+  error: (msg) => {}         // Report error
+}
+```
+
+### Uploader Function Signature
+
+```javascript
+function(entries, onViewError) {
+  // entries: Array of entry objects
+  // onViewError: Callback to register cleanup on view errors
+  
+  entries.forEach(entry => {
+    // Setup upload
+    let upload = createUpload(entry.file, entry.meta)
+    
+    // Cleanup on errors
+    onViewError(() => upload.abort())
+    
+    // Report progress
+    upload.on('progress', (pct) => entry.progress(pct))
+    
+    // Report errors
+    upload.on('error', (err) => entry.error(err.message))
+    
+    // Report completion
+    upload.on('complete', () => entry.progress(100))
+  })
+}
+```
+
+## Complete Example: Google Cloud Storage
+
+<CodeGroup>
+
+```elixir Server
+def presign_upload(entry, socket) do
+  bucket = "my-bucket"
+  key = "uploads/#{entry.client_name}"
+  
+  {:ok, upload_url} = GoogleCloud.generate_signed_url(
+    bucket,
+    key,
+    content_type: entry.client_type,
+    expires_in: 3600
+  )
+  
+  {:ok, %{uploader: "GCS", key: key, url: upload_url}, socket}
+end
+```
+
+```javascript Client
+Uploaders.GCS = function(entries, onViewError) {
+  entries.forEach(entry => {
+    let xhr = new XMLHttpRequest()
+    onViewError(() => xhr.abort())
+    
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        entry.progress((e.loaded / e.total) * 100)
+      }
+    }
+    
+    xhr.onload = () => {
+      if (xhr.status === 200) {
+        entry.progress(100)
+      } else {
+        entry.error(`Upload failed: ${xhr.status}`)
+      }
+    }
+    
+    xhr.onerror = () => entry.error("Network error")
+    
+    xhr.open("PUT", entry.meta.url)
+    xhr.setRequestHeader("Content-Type", entry.file.type)
+    xhr.send(entry.file)
+  })
+}
+```
+
+</CodeGroup>
+
+## Debugging
+
+### Client-Side
+
+- Check browser console for JavaScript errors
+- Inspect Network tab for failed upload requests
+- Verify CORS configuration allows your domain
+
+### Server-Side
+
+```elixir
+defp presign_upload(entry, socket) do
+  IO.inspect(entry, label: "Upload Entry")
+  # ... rest of function
+end
+```
+
+### Common Issues
+
+<Tabs>
+  <Tab title="CORS Errors">
+    **Problem:** Browser blocks upload due to CORS
+    
+    **Solution:** Update bucket CORS configuration:
+    ```json
+    {
+      "AllowedOrigins": ["https://yourdomain.com"],
+      "AllowedMethods": ["PUT", "POST"],
+      "AllowedHeaders": ["*"]
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Signature Errors">
+    **Problem:** S3 returns signature mismatch
+    
+    **Solution:** Verify:
+    - Correct AWS credentials
+    - Matching content-type in signature and upload
+    - No extra whitespace in keys
+  </Tab>
+  
+  <Tab title="Progress Stalls">
+    **Problem:** Progress stops before 100%
+    
+    **Solution:**
+    - Check `entry.progress(100)` is called on success
+    - Verify success status code (200 or 204)
+    - Ensure `onload` callback is registered
+  </Tab>
+</Tabs>
+
+## Best Practices
+
+1. **Validate on server** - Always validate file size and type server-side
+2. **Set expiration** - Use short-lived pre-signed URLs (1-2 hours)
+3. **Handle errors** - Provide clear error messages to users
+4. **Progress feedback** - Always show upload progress
+5. **Cleanup** - Abort uploads on view errors with `onViewError`
+6. **Security** - Never expose AWS credentials to the client
+
+## See Also
+
+- [Server Uploads Guide](https://hexdocs.pm/phoenix_live_view/uploads.html)
+- [JS Interop](/client/js-interop) - Client hooks and JavaScript integration
+- [Form Bindings](/client/form-bindings) - File input handling
+- [SimpleS3Upload Gist](https://gist.github.com/chrismccord/37862f1f8b1f5148644b75d20d1cb073)

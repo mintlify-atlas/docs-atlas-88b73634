@@ -1,0 +1,120 @@
+---
+title: Phoenix.LiveView.Controller
+description: API reference for Phoenix.LiveView.Controller module
+---
+
+Helpers for rendering LiveViews from a controller.
+
+## Overview
+
+The `Phoenix.LiveView.Controller` module provides functions for rendering LiveViews from within traditional Phoenix controllers. This is useful when you need to render a LiveView as part of a regular controller action rather than through the router.
+
+## Functions
+
+### live_render/3
+
+Renders a live view from a Plug request and sends an HTML response from within a controller.
+
+```elixir
+live_render(conn, view, opts \\ [])
+```
+
+<ParamField path="conn" type="Plug.Conn.t()" required>
+  The connection struct from the controller
+</ParamField>
+
+<ParamField path="view" type="module" required>
+  The LiveView module to render
+</ParamField>
+
+<ParamField path="opts" type="keyword">
+  Options for rendering the LiveView. See `Phoenix.Component.live_render/3` for all supported options.
+  
+  Common options include:
+  - `:session` - Session data to pass to the LiveView's mount callback
+  - `:container` - HTML container configuration
+  - `:id` - The DOM ID for the LiveView
+</ParamField>
+
+<ResponseField name="conn" type="Plug.Conn.t()">
+  The connection with the rendered LiveView response
+</ResponseField>
+
+Automatically sets the `@live_module` assign with the value of the LiveView being rendered.
+
+#### Examples
+
+**Basic usage:**
+
+```elixir
+defmodule MyAppWeb.ThermostatController do
+  use MyAppWeb, :controller
+  import Phoenix.LiveView.Controller
+
+  def show(conn, %{"id" => thermostat_id}) do
+    live_render(conn, MyAppWeb.ThermostatLive, session: %{
+      "thermostat_id" => thermostat_id,
+      "current_user_id" => get_session(conn, :user_id)
+    })
+  end
+end
+```
+
+**With custom container:**
+
+```elixir
+def dashboard(conn, _params) do
+  live_render(conn, MyAppWeb.DashboardLive,
+    session: %{"user_id" => conn.assigns.current_user.id},
+    container: {:div, class: "dashboard-container"}
+  )
+end
+```
+
+**Passing session data:**
+
+```elixir
+def show(conn, %{"id" => id}) do
+  live_render(conn, MyAppWeb.ShowLive, session: %{
+    "resource_id" => id,
+    "user_token" => get_session(conn, :user_token),
+    "locale" => get_session(conn, :locale)
+  })
+end
+```
+
+## Behavior
+
+The function handles different scenarios:
+
+1. **Successful render**: Returns the rendered HTML content with proper assigns
+2. **Redirect**: If the LiveView redirects during mount, follows the redirect appropriately
+3. **Live redirect**: Handles live navigation redirects with flash messages
+
+## Integration
+
+To use this module in your controllers, import it in your controller base:
+
+```elixir
+defmodule MyAppWeb do
+  def controller do
+    quote do
+      use Phoenix.Controller
+      import Phoenix.LiveView.Controller
+      # ... other imports
+    end
+  end
+end
+```
+
+Then it will be available in all controllers:
+
+```elixir
+defmodule MyAppWeb.PageController do
+  use MyAppWeb, :controller
+
+  def index(conn, _params) do
+    live_render(conn, MyAppWeb.PageLive)
+  end
+end
+```

@@ -1,0 +1,465 @@
+---
+title: "Change Tracking"
+description: "How LiveView tracks and minimizes template updates"
+---
+
+LiveView's change tracking is a sophisticated mechanism that minimizes the data sent over the wire by tracking which assigns have changed and only re-rendering the affected dynamic parts of your templates.
+
+## How It Works
+
+When you first render a template, LiveView sends both static and dynamic parts to the client. On subsequent renders, only changed dynamic parts are sent.
+
+### Initial Render
+
+Consider this template:
+
+```heex
+<h1>{expand_title(@title)}</h1>
+```
+
+This has:
+- **Static parts**: `<h1>` and `</h1>`
+- **Dynamic parts**: `expand_title(@title)`
+
+On initial render, all parts are sent to the client.
+
+### Subsequent Renders
+
+If `@title` doesn't change, **nothing is sent**. The dynamic part is not even executed.
+
+If `@title` changes, only the new result of `expand_title(@title)` is sent.
+
+## The Rendered Struct
+
+From `lib/phoenix_live_view/engine.ex:100-126`:
+
+```elixir
+defmodule Phoenix.LiveView.Rendered do
+  defstruct [:static, :dynamic, :fingerprint, :root, caller: :not_available]
+
+  @type t :: %__MODULE__{
+          static: [String.t()],
+          dynamic: (boolean() -> [dyn()]),
+          fingerprint: integer(),
+          root: nil | true | false
+        }
+end
+```
+
+- **`:static`**: List of literal strings (optimized by compiler)
+- **`:dynamic`**: Function that returns dynamic content when called with `track_changes?` boolean
+- **`:fingerprint`**: Unique identifier for the template
+- **`:root`**: Whether this is a root template
+
+### Fingerprints
+
+Fingerprints identify templates uniquely. From `lib/phoenix_live_view/engine.ex:1323-1334`:
+
+```elixir
+defp fingerprint(block, static) do
+  <<fingerprint::8*16>> =
+    [block | static]
+    |> :erlang.term_to_binary()
+    |> :erlang.md5()
+
+  fingerprint
+end
+```
+
+If fingerprints differ between renders, LiveView knows the template changed and disables change tracking for that render.
+
+## Assign-Level Tracking
+
+Change tracking works at the assign level:
+
+```heex
+<div id={"user_#{@user.id}">
+  {@user.name}
+</div>
+```
+
+If `@user.name` changes but `@user.id` doesn't:
+- `@user.name` is re-rendered and sent
+- `@user.id` is **not executed or sent**
+
+### The `__changed__` Map
+
+From `lib/phoenix_live_view/engine.ex:392-398`:
+
+```elixir
+changed =
+  quote generated: true do
+    case unquote(@assigns_var) do
+      %{__changed__: changed} when track_changes? -> changed
+      _ -> nil
+    end
+  end
+```
+
+The `__changed__` map tracks which assigns have been modified:
+
+```elixir
+# When you call assign/3
+assign(socket, :count, 5)
+# Internally sets
+socket.assigns.__changed__ = %{count: true}
+```
+
+### Checking for Changes
+
+From `lib/phoenix_live_view/engine.ex:1395-1401`:
+
+```elixir
+def changed_assign?(changed, name) do
+  case changed do
+    %{^name => _} -> true
+    %{} -> false
+    nil -> true  # No tracking = assume changed
+  end
+end
+```
+
+## Nested Field Tracking
+
+LiveView tracks changes through nested map/struct fields:
+
+```heex
+<div>{@user.profile.bio}</div>
+```
+
+From `lib/phoenix_live_view/engine.ex:1412-1428`:
+
+```elixir
+def nested_changed_assign?(tail, head, assigns, changed),
+  do: nested_changed_assign(tail, head, assigns, changed) != false
+
+defp nested_changed_assign(tail, head, assigns, changed) do
+  case changed do
+    %{^head => changed} ->
+      case assigns do
+        %{^head => assigns} -> recur_changed_assign(tail, assigns, changed)
+        %{} -> true
+      end
+
+    %{} -> false
+    nil -> true
+  end
+end
+```
+
+This allows efficient tracking of deeply nested structures.
+
+## Function Components
+
+Function components participate in change tracking:
+
+```heex
+<.show_name name={@user.name} />
+```
+
+Only if `@user.name` changes will the component re-render.
+
+### Explicit Attributes
+
+From `lib/phoenix_live_view/engine.ex:750-829`:
+
+```elixir
+defp to_component_tracking(meta, fun, expr, extra, vars, caller) do
+  # Separate static and dynamic parts
+  {static, dynamic} = case expr do
+    {{:., _, [{:__aliases__, _, [:Map]}, :merge]}, _, [dynamic, {:%{}, _, static}]} ->
+      {static, dynamic}
+    {:%{}, _, static} ->
+      {static, %{}}
+    static ->
+      {static, %{}}
+  end
+  # ...
+end
+```
+
+**Always prefer explicit attributes** over spreading assigns:
+
+```elixir
+# Good: Change tracking works
+<.card title={@title} class={@title_class} />
+
+# Bad: Disables change tracking
+<.card {assigns} />
+```
+
+## Common Pitfalls
+
+### Variables in Templates
+
+Variables disable change tracking:
+
+```heex
+<!-- BAD: Disables tracking -->
+<% some_var = @x + @y %>
+{some_var}
+```
+
+```heex
+<!-- GOOD: Tracking works -->
+{sum(@x, @y)}
+```
+
+From `lib/phoenix_live_view/engine.ex:1292-1321`:
+
+```elixir
+defp maybe_warn_taint(name, meta, caller) do
+  if caller && Macro.Env.has_var?(caller, {name, nil}) do
+    message = """
+    you are accessing the variable "#{name}" inside a LiveView template.
+
+    Using variables in HEEx templates are discouraged as they disable change tracking.
+    """
+    IO.warn(message, Macro.Env.stacktrace(%{caller | line: line}))
+  end
+end
+```
+
+<Warning>
+**Never** define variables in templates or at the top of `render/1`:
+
+```elixir
+# BAD
+def render(assigns) do
+  sum = assigns.x + assigns.y  # Disables tracking!
+
+  ~H"""
+  {sum}
+  """
+end
+```
+
+```elixir
+# GOOD
+def render(assigns) do
+  assigns = assign(assigns, :sum, assigns.x + assigns.y)
+
+  ~H"""
+  {@sum}
+  """
+end
+```
+</Warning>
+
+### Accessing `assigns` Directly
+
+Never access the `assigns` variable in templates:
+
+```heex
+<!-- BAD: Disables tracking -->
+<.card_header {assigns} />
+<.card_body {assigns} />
+```
+
+```heex
+<!-- GOOD: Tracking enabled -->
+<.card_header title={@title} class={@title_class} />
+<.card_body>{render_slot(@inner_block)}</.card_body>
+```
+
+Exception: When calling components as functions:
+
+```elixir
+def card(assigns) do
+  ~H"""
+  <div class="card">
+    {card_header(assigns)}
+    {card_body(assigns)}
+  </div>
+  """
+end
+```
+
+### Using Map Functions
+
+Never use `Map.put/3` or `Map.merge/2` on assigns:
+
+```elixir
+# BAD: Breaks change tracking
+def card(assigns) do
+  assigns = Map.put(assigns, :sum, Enum.sum(assigns.values))
+
+  ~H"""
+  <p>{@sum}</p>
+  """
+end
+```
+
+```elixir
+# GOOD: Change tracking works
+def card(assigns) do
+  assigns = assign(assigns, :sum, Enum.sum(assigns.values))
+
+  ~H"""
+  <p>{@sum}</p>
+  """
+end
+```
+
+From the guides (`guides/server/assigns-eex.md:243-269`):
+
+> If you modify the assigns variable with `Map.put/3`, those assigns inside your HEEx template will not update after the initial render.
+
+## Comprehensions
+
+LiveView optimizes comprehensions to track individual items:
+
+```heex
+<section :for={post <- @posts} :key={post.id}>
+  <h1>{expand_title(post.title)}</h1>
+</section>
+```
+
+### Without Keys
+
+By default, index-based tracking is used. Inserting at the beginning causes all items to be re-sent.
+
+### With Keys
+
+Using `:key` enables ID-based tracking:
+
+```heex
+<section :for={post <- @posts} :key={post.id}>
+  <h1>{post.title}</h1>
+</section>
+```
+
+Now only changed posts are sent, regardless of position.
+
+### Memory Trade-offs
+
+From the guides (`guides/server/assigns-eex.md:308-313`):
+
+> To track changes in comprehensions, LiveView needs to perform additional bookkeeping, which requires extra memory on the server. If memory usage is a concern, you should also consider using `Phoenix.LiveView.stream/4`, which allows you to manage collections without keeping them in memory.
+
+## The Diff Algorithm
+
+From `lib/phoenix_live_view/diff.ex:134-162`:
+
+```elixir
+def render(socket, %Rendered{} = rendered, prints, components) do
+  {diff, prints, pending, components, template} =
+    traverse(rendered, prints, %{}, components, {%{}, %{}}, true)
+
+  {cid_to_component, _, _} = components
+
+  {cdiffs, components} =
+    render_pending_components(socket, pending, cid_to_component, %{}, components)
+
+  diff =
+    diff
+    |> maybe_add_template(template)
+    |> maybe_put_title(socket)
+
+  {diff, cdiffs} = extract_events({diff, cdiffs})
+  {maybe_put_cdiffs(diff, cdiffs), prints, components}
+end
+```
+
+The `traverse/6` function walks the rendered tree and builds a minimal diff.
+
+### Conditional Rendering
+
+From `lib/phoenix_live_view/engine.ex:665-687`:
+
+```elixir
+defp to_conditional_var(keys, var, live_struct) when keys == %{} do
+  quote generated: true do
+    unquote(var) =
+      case changed do
+        %{} -> nil
+        _ -> unquote(live_struct)
+      end
+  end
+end
+
+defp to_conditional_var(keys, var, live_struct) do
+  quote do
+    unquote(var) =
+      case unquote(changed_assigns(keys)) do
+        true -> unquote(live_struct)
+        false -> nil
+      end
+  end
+end
+```
+
+If no tracked assigns changed, `nil` is returned, signaling "no change" to the diff engine.
+
+## Performance Impact
+
+### Wire Efficiency
+
+Proper change tracking reduces payload sizes by 90%+ for typical updates:
+
+```javascript
+// Without tracking: Send entire template
+{"0": "<div>...</div>"}
+
+// With tracking: Send only changed field
+{"0": {"0": "new value"}}
+```
+
+### CPU Usage
+
+Change tracking adds minimal CPU overhead:
+
+1. **Template compilation**: One-time cost, generates efficient bytecode
+2. **Runtime checks**: Simple map lookups in `__changed__`
+3. **Diff generation**: Only processes changed parts
+
+### Memory Usage
+
+The `__changed__` map is small (typically less than 10 keys) and cleared after each render.
+
+## Best Practices
+
+<Tip>
+**Always:**
+- Use `assign/3` to set assigns
+- Access assigns with `@name` syntax
+- Use explicit attributes for components
+- Add `:key` to comprehensions when order changes
+
+**Never:**
+- Define variables in templates
+- Use `Map.put/3` on assigns
+- Spread `assigns` to components (except as function calls)
+- Access assigns outside `@` syntax
+</Tip>
+
+## Debugging Change Tracking
+
+Enable debug logging:
+
+```elixir
+require Logger
+
+def handle_event("update", _params, socket) do
+  Logger.debug("Changed: #{inspect(socket.assigns.__changed__)}")
+  {:noreply, assign(socket, :count, socket.assigns.count + 1)}
+end
+```
+
+Inspect rendered output:
+
+```elixir
+rendered = Phoenix.LiveView.Renderer.to_rendered(socket, MyLive)
+IO.inspect(rendered, label: "Rendered")
+```
+
+## Summary
+
+Change tracking is automatic and transparent when you follow best practices:
+
+1. **Use assigns** for all dynamic data
+2. **Avoid variables** in templates
+3. **Use LiveView functions** (`assign/3`, `update/3`) to modify assigns
+4. **Be explicit** with component attributes
+
+These simple rules enable LiveView to send minimal diffs and provide exceptional performance.

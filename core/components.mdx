@@ -1,0 +1,634 @@
+---
+title: Function Components
+description: Building reusable, stateless components with Phoenix.Component
+---
+
+Function components are pure, stateless functions that receive an assigns map and return rendered HEEx templates. They are the simplest and most performant way to create reusable UI elements in Phoenix LiveView.
+
+## What is a Function Component?
+
+A function component is any function that receives an `assigns` map and returns a rendered struct built with the `~H` sigil:
+
+```elixir
+defmodule MyComponent do
+  use Phoenix.Component
+
+  def greet(assigns) do
+    ~H"""
+    <p>Hello, {@name}!</p>
+    """
+  end
+end
+```
+
+<Info>
+Function components are also called **stateless components** because they don't maintain their own state or lifecycle. They simply transform data (assigns) into HTML.
+</Info>
+
+## Basic Usage
+
+### Defining a Component
+
+```elixir
+defmodule MyAppWeb.Components do
+  use Phoenix.Component
+
+  def greeting(assigns) do
+    ~H"""
+    <div class="greeting">
+      <h1>Hello, {@name}!</h1>
+    </div>
+    """
+  end
+end
+```
+
+### Invoking a Component
+
+<Tabs>
+  <Tab title="From Same Module">
+    ```heex
+    <.greeting name="Alice" />
+    ```
+  </Tab>
+  <Tab title="From Another Module">
+    ```heex
+    <MyAppWeb.Components.greeting name="Alice" />
+    ```
+  </Tab>
+  <Tab title="After Import">
+    ```elixir
+    import MyAppWeb.Components
+    ```
+    ```heex
+    <.greeting name="Alice" />
+    ```
+  </Tab>
+</Tabs>
+
+## Attributes
+
+The `attr/3` macro declares what attributes a component expects.
+
+### Basic Attributes
+
+```elixir
+attr :name, :string, required: true
+attr :age, :integer, default: 0
+
+def user_card(assigns) do
+  ~H"""
+  <div class="card">
+    <h2>{@name}</h2>
+    <p>Age: {@age}</p>
+  </div>
+  """
+end
+```
+
+### Attribute Types
+
+Phoenix.Component supports multiple attribute types:
+
+- `:any` - Any term
+- `:string` - String
+- `:atom` - Atom  
+- `:boolean` - Boolean
+- `:integer` - Integer
+- `:float` - Float
+- `:list` - List
+- `:map` - Map
+- `:global` - Global HTML attributes (see below)
+
+### Attribute Options
+
+```elixir
+attr :name, :string,
+  required: true,
+  default: nil,
+  examples: ["Alice", "Bob"],
+  doc: "The user's name"
+```
+
+<Accordion title="Available Options">
+- **required** - Whether the attribute is required (default: `false`)
+- **default** - Default value if not provided
+- **examples** - List of example values for documentation
+- **doc** - Documentation string for the attribute
+- **values** - List of allowed values (enum validation)
+</Accordion>
+
+### Global Attributes
+
+Global attributes allow components to accept common HTML attributes without declaring each one:
+
+```elixir
+attr :message, :string, required: true
+attr :rest, :global
+
+def notification(assigns) do
+  ~H"""
+  <span {@rest}>{@message}</span>
+  """
+end
+```
+
+Now you can pass any standard HTML attribute:
+
+```heex
+<.notification 
+  message="You've got mail!" 
+  class="bg-blue-200" 
+  phx-click="close" 
+  data-test="notification" 
+/>
+```
+
+This renders:
+
+```html
+<span class="bg-blue-200" phx-click="close" data-test="notification">
+  You've got mail!
+</span>
+```
+
+#### Global Attribute Defaults
+
+```elixir
+attr :rest, :global, default: %{class: "btn btn-primary"}
+
+def button(assigns) do
+  ~H"""
+  <button {@rest}>
+    {render_slot(@inner_block)}
+  </button>
+  """
+end
+```
+
+#### Including Specific Attributes
+
+```elixir
+attr :rest, :global, include: ~w(form disabled)
+
+def button(assigns) do
+  ~H"""
+  <button {@rest}>
+    {render_slot(@inner_block)}
+  </button>
+  """
+end
+```
+
+### Custom Global Prefixes
+
+Extend global attributes with custom prefixes like Alpine.js's `x-`:
+
+```elixir
+# In your my_app_web.ex
+def html do
+  quote do
+    use Phoenix.Component, global_prefixes: ~w(x-)
+    # ...
+  end
+end
+```
+
+Now all components accept `x-*` attributes:
+
+```heex
+<.modal x-show="open" x-transition>
+  Content
+</.modal>
+```
+
+## Slots
+
+Slots allow components to accept blocks of HEEx content, enabling flexible composition.
+
+### The Inner Block
+
+Every component has access to a default slot called `@inner_block`:
+
+```elixir
+slot :inner_block, required: true
+
+def button(assigns) do
+  ~H"""
+  <button class="btn">
+    {render_slot(@inner_block)}
+  </button>
+  """
+end
+```
+
+Usage:
+
+```heex
+<.button>
+  Click me!
+</.button>
+```
+
+### Passing Data to Slots
+
+Slots can receive data from the component via `:let`:
+
+```elixir
+slot :inner_block, required: true
+attr :entries, :list, default: []
+
+def list(assigns) do
+  ~H"""
+  <ul>
+    <li :for={entry <- @entries}>
+      {render_slot(@inner_block, entry)}
+    </li>
+  </ul>
+  """
+end
+```
+
+Usage:
+
+```heex
+<.list :let={fruit} entries={~w(apples bananas cherries)}>
+  I like <b>{fruit}</b>!
+</.list>
+```
+
+Renders:
+
+```html
+<ul>
+  <li>I like <b>apples</b>!</li>
+  <li>I like <b>bananas</b>!</li>
+  <li>I like <b>cherries</b>!</li>
+</ul>
+```
+
+### Named Slots
+
+Components can accept multiple named slots:
+
+```elixir
+slot :header
+slot :inner_block, required: true
+slot :footer, required: true
+
+def modal(assigns) do
+  ~H"""
+  <div class="modal">
+    <div class="modal-header">
+      {render_slot(@header) || "Modal"}
+    </div>
+    <div class="modal-body">
+      {render_slot(@inner_block)}
+    </div>
+    <div class="modal-footer">
+      {render_slot(@footer)}
+    </div>
+  </div>
+  """
+end
+```
+
+Usage:
+
+```heex
+<.modal>
+  This is the body content.
+  <:footer>
+    <button>Close</button>
+  </:footer>
+</.modal>
+```
+
+<Note>
+`render_slot/1` returns `nil` when an optional slot is not provided, allowing for default behavior.
+</Note>
+
+### Slot Attributes
+
+Named slots can accept their own attributes:
+
+```elixir
+slot :column, doc: "Table columns" do
+  attr :label, :string, required: true, doc: "Column label"
+end
+
+attr :rows, :list, default: []
+
+def table(assigns) do
+  ~H"""
+  <table>
+    <tr>
+      <th :for={col <- @column}>{col.label}</th>
+    </tr>
+    <tr :for={row <- @rows}>
+      <td :for={col <- @column}>{render_slot(col, row)}</td>
+    </tr>
+  </table>
+  """
+end
+```
+
+Usage:
+
+```heex
+<.table rows={[%{name: "Jane", age: 34}, %{name: "Bob", age: 51}]}>
+  <:column :let={user} label="Name">
+    {user.name}
+  </:column>
+  <:column :let={user} label="Age">
+    {user.age}
+  </:column>
+</.table>
+```
+
+## Dynamic Attributes
+
+Pass multiple dynamic attributes as a map or keyword list:
+
+```heex
+<div {@dynamic_attrs}>
+  Content
+</div>
+```
+
+The `@dynamic_attrs` must be a keyword list or map with atom keys:
+
+```elixir
+assign(socket, :dynamic_attrs, class: "bg-blue", id: "main")
+```
+
+## Component Patterns
+
+### Conditional Rendering
+
+```elixir
+attr :show, :boolean, default: false
+slot :inner_block, required: true
+
+def show_if(assigns) do
+  ~H"""
+  <div :if={@show}>
+    {render_slot(@inner_block)}
+  </div>
+  """
+end
+```
+
+### Wrapper Components
+
+```elixir
+attr :class, :string, default: "container"
+slot :inner_block, required: true
+
+def container(assigns) do
+  ~H"""
+  <div class={@class}>
+    {render_slot(@inner_block)}
+  </div>
+  """
+end
+```
+
+### Icon Components
+
+```elixir
+attr :name, :string, required: true, values: ~w(check close info)
+attr :class, :string, default: "w-5 h-5"
+
+def icon(assigns) do
+  ~H"""
+  <svg class={@class}>
+    <use href={"/images/icons.svg##{@name}"} />
+  </svg>
+  """
+end
+```
+
+### Card Components with Composition
+
+```elixir
+attr :title, :string, required: true
+slot :actions
+slot :inner_block, required: true
+
+def card(assigns) do
+  ~H"""
+  <div class="card">
+    <div class="card-header">
+      <h3>{@title}</h3>
+      <div :if={@actions != []} class="card-actions">
+        {render_slot(@actions)}
+      </div>
+    </div>
+    <div class="card-body">
+      {render_slot(@inner_block)}
+    </div>
+  </div>
+  """
+end
+```
+
+## Embedding External Templates
+
+Use `embed_templates/1` to load templates from `.html.heex` files:
+
+```
+├── components.ex
+├── cards/
+│   ├── pricing.html.heex
+│   └── features.html.heex
+```
+
+```elixir
+defmodule MyAppWeb.Components do
+  use Phoenix.Component
+
+  embed_templates "cards/*"
+  
+  # Now .pricing/1 and .features/1 are available
+end
+```
+
+Usage:
+
+```heex
+<.pricing />
+<.features />
+```
+
+## Function vs. LiveComponents
+
+<Tabs>
+  <Tab title="Use Function Components When...">
+    - You need to render UI without state
+    - The component doesn't handle events
+    - You want maximum performance
+    - You're organizing markup for reuse
+  </Tab>
+  <Tab title="Use LiveComponents When...">
+    - The component needs its own state
+    - The component handles its own events
+    - You need lifecycle callbacks (mount, update)
+    - You're building a complex, stateful widget
+  </Tab>
+</Tabs>
+
+<Warning>
+**Anti-pattern**: Don't use LiveComponents just for code organization. Function components are simpler and more efficient for stateless UI.
+</Warning>
+
+## assigns_to_attributes/2
+
+For advanced cases, convert assigns to a keyword list for dynamic attributes:
+
+```elixir
+def my_link(assigns) do
+  target = if assigns[:new_window], do: "_blank", else: false
+  extra = assigns_to_attributes(assigns, [:new_window, :to])
+
+  assigns =
+    assigns
+    |> assign(:target, target)
+    |> assign(:extra, extra)
+
+  ~H"""
+  <a href={@to} target={@target} {@extra}>
+    {render_slot(@inner_block)}
+  </a>
+  """
+end
+```
+
+<Note>
+Prefer using `:global` attributes over `assigns_to_attributes/2` for most cases.
+</Note>
+
+## Best Practices
+
+<Accordion title="Always declare attributes with attr/3">
+  Declarations provide compile-time validation and better documentation.
+</Accordion>
+
+<Accordion title="Keep components small and focused">
+  Each component should have a single, clear responsibility.
+</Accordion>
+
+<Accordion title="Use slots for composition">
+  Slots make components flexible without complex prop drilling.
+</Accordion>
+
+<Accordion title="Avoid logic in templates">
+  Move complex logic into separate functions or assigns.
+  
+  ```elixir
+  # BAD
+  def card(assigns) do
+    ~H"""
+    <div class={if @active, do: "active", else: "inactive"}>
+    """
+  end
+  
+  # GOOD
+  def card(assigns) do
+    assigns = assign(assigns, :class, card_class(assigns))
+    ~H"""
+    <div class={@class}>
+    """
+  end
+  
+  defp card_class(%{active: true}), do: "active"
+  defp card_class(_), do: "inactive"
+  ```
+</Accordion>
+
+<Accordion title="Use :let carefully">
+  Only pass the data the slot actually needs, not the entire assigns.
+</Accordion>
+
+## Common Patterns
+
+### Loading States
+
+```elixir
+attr :loading, :boolean, default: false
+slot :inner_block, required: true
+
+def async_content(assigns) do
+  ~H"""
+  <div :if={@loading} class="spinner">Loading...</div>
+  <div :if={!@loading}>
+    {render_slot(@inner_block)}
+  </div>
+  """
+end
+```
+
+### Error Boundaries
+
+```elixir
+attr :errors, :list, default: []
+slot :inner_block, required: true
+
+def error_boundary(assigns) do
+  ~H"""
+  <div>
+    <div :if={@errors != []} class="errors">
+      <p :for={error <- @errors} class="error">{error}</p>
+    </div>
+    {render_slot(@inner_block)}
+  </div>
+  """
+end
+```
+
+### Form Fields
+
+```elixir
+attr :field, Phoenix.HTML.FormField, required: true
+attr :type, :string, default: "text"
+attr :rest, :global, include: ~w(placeholder disabled)
+
+def input(assigns) do
+  ~H"""
+  <div>
+    <label for={@field.id}>{@field.name}</label>
+    <input 
+      type={@type}
+      name={@field.name}
+      id={@field.id}
+      value={@field.value}
+      {@rest}
+    />
+    <span :if={@field.errors != []} class="error">
+      {translate_error(@field.errors)}
+    </span>
+  </div>
+  """
+end
+```
+
+## Testing Components
+
+Test function components using `Phoenix.LiveViewTest.render_component/2`:
+
+```elixir
+test "renders greeting" do
+  html = render_component(&MyComponent.greeting/1, name: "Alice")
+  assert html =~ "Hello, Alice!"
+end
+```
+
+## Summary
+
+- Function components are pure functions: `assigns -> HEEx`
+- Use `attr/3` to declare expected attributes
+- Use `slot/3` to accept blocks of content
+- Pass data to slots with `render_slot/2` and `:let`
+- Use `:global` attributes for flexible HTML attributes
+- Prefer function components over LiveComponents for stateless UI
+- Keep components small, focused, and composable

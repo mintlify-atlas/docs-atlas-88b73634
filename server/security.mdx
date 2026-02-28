@@ -1,0 +1,429 @@
+---
+title: "Security Model"
+description: "Understand authentication, authorization, and security best practices for LiveView"
+---
+
+LiveView begins its life-cycle as a regular HTTP request, then establishes a stateful connection. Both phases receive client data via parameters and session, requiring careful security considerations.
+
+<Warning>
+Any session validation must happen both in the HTTP request (plug pipeline) and the stateful connection (LiveView mount).
+</Warning>
+
+## Authentication vs Authorization
+
+**Authentication** identifies who a user is (e.g., by email/password or OAuth).
+
+**Authorization** determines what a user can access or do in the system.
+
+### Authentication Flow
+
+<Steps>
+  <Step title="User logs in">
+    User provides credentials (email/password, OAuth, etc.).
+  </Step>
+  <Step title="Token stored in session">
+    A token identifying the user is stored in the session cookie.
+  </Step>
+  <Step title="Session validated on each request">
+    For each request, the session is read and validated.
+  </Step>
+  <Step title="User fetched from database">
+    If valid, the user is fetched from the database.
+  </Step>
+</Steps>
+
+<Info>
+Phoenix and tools like `mix phx.gen.auth` can generate the building blocks of an authentication system for you.
+</Info>
+
+### LiveView Security Flow
+
+LiveViews share authentication logic with regular requests through plugs:
+
+1. **HTTP Request** → Endpoint → Router → Plugs → LiveView HTTP mount
+2. **WebSocket Connection** → LiveView connected mount
+
+Both mount phases must validate the session independently.
+
+## Using `live_session`
+
+The `Phoenix.LiveView.Router.live_session/2` is the primary mechanism for grouping LiveViews with shared authentication/authorization requirements.
+
+### Basic Usage
+
+```elixir
+scope "/" do
+  pipe_through [:authenticate_user]
+
+  live_session :default, on_mount: MyAppWeb.UserLiveAuth do
+    live "/", HomeLive
+    live "/dashboard", DashboardLive
+  end
+end
+
+scope "/admin" do
+  pipe_through [:authenticate_admin]
+
+  live_session :admin, on_mount: MyAppWeb.AdminLiveAuth do
+    live "/admin", AdminLive
+    live "/admin/users", AdminUsersLive
+  end
+end
+```
+
+### Why `live_session`?
+
+- **Navigation within a session**: Skip regular HTTP requests and plug pipeline
+- **Navigation across sessions**: Go through the router and plugs again
+- **Security boundary**: Different authentication requirements
+- **Layout changes**: Different root layouts for different sections
+
+<Note>
+Use `live_session` to enforce different authentication requirements (like user vs admin), not just for minor authorization differences.
+</Note>
+
+## The `on_mount` Hook
+
+The `on_mount` hook allows you to run authentication/authorization logic on every LiveView mount.
+
+### Implementing a LiveAuth Hook
+
+```elixir
+defmodule MyAppWeb.UserLiveAuth do
+  import Phoenix.Component
+  import Phoenix.LiveView
+  alias MyAppWeb.Accounts  # from `mix phx.gen.auth`
+
+  def on_mount(:default, _params, %{"user_token" => user_token} = _session, socket) do
+    socket =
+      assign_new(socket, :current_user, fn ->
+        Accounts.get_user_by_session_token(user_token)
+      end)
+
+    if socket.assigns.current_user.confirmed_at do
+      {:cont, socket}
+    else
+      {:halt, redirect(socket, to: "/login")}
+    end
+  end
+  
+  def on_mount(:default, _params, _session, socket) do
+    {:halt, redirect(socket, to: "/login")}
+  end
+end
+```
+
+<Tip>
+Use `assign_new/3` to avoid fetching the current user multiple times across parent-child LiveViews.
+</Tip>
+
+### Using the Hook
+
+You can use the hook in three ways:
+
+**1. In the router (recommended):**
+
+```elixir
+live_session :default, on_mount: MyAppWeb.UserLiveAuth do
+  live "/dashboard", DashboardLive
+end
+```
+
+**2. Directly in the LiveView:**
+
+```elixir
+defmodule MyAppWeb.DashboardLive do
+  use MyAppWeb, :live_view
+  on_mount MyAppWeb.UserLiveAuth
+  
+  # ...
+end
+```
+
+**3. In all LiveViews by default:**
+
+```elixir
+# lib/my_app_web.ex
+def live_view do
+  quote do
+    use Phoenix.LiveView
+    on_mount MyAppWeb.UserLiveAuth
+    unquote(html_helpers())
+  end
+end
+```
+
+## Mounting Considerations
+
+The `mount/3` callback is invoked both on initial HTTP mount and when LiveView connects. Any authorization performed during mount covers all scenarios.
+
+### Example: User Authentication
+
+```elixir
+def mount(_params, %{"user_id" => user_id} = _session, socket) do
+  socket = assign(socket, current_user: Accounts.get_user!(user_id))
+
+  socket =
+    if socket.assigns.current_user.confirmed_at do
+      socket
+    else
+      redirect(socket, to: "/login")
+    end
+
+  {:ok, socket}
+end
+```
+
+### Example: Resource Authorization
+
+```elixir
+def mount(%{"org_id" => org_id}, _session, socket) do
+  user = socket.assigns.current_user
+  
+  # Only get orgs that belong to the user
+  organizations_query = Ecto.assoc(user, :organizations)
+  org = Repo.get!(organizations_query, org_id)
+  
+  {:ok, assign(socket, org: org)}
+end
+```
+
+<Info>
+If the user doesn't have access to the organization, `Repo.get!` raises `Ecto.NoResultsError`, which is converted to a 404 page.
+</Info>
+
+## Event Authorization
+
+Every user action must be verified on the server, regardless of UI state.
+
+### Why Event Authorization?
+
+Even if you hide the "Delete" button in the UI, a savvy user can directly send a delete event to the server. You must always verify permissions on the server.
+
+### Example: Delete Authorization
+
+```elixir
+defmodule MyAppWeb.ProjectsLive do
+  use MyAppWeb, :live_view
+  on_mount MyAppWeb.UserLiveAuth
+
+  def mount(_params, _session, socket) do
+    {:ok, load_projects(socket)}
+  end
+
+  def handle_event("delete_project", %{"project_id" => project_id}, socket) do
+    # Always pass current_user to verify permissions
+    Project.delete!(socket.assigns.current_user, project_id)
+    {:noreply, update(socket, :projects, &Enum.reject(&1, fn p -> p.id == project_id end))}
+  end
+
+  defp load_projects(socket) do
+    projects = Project.all_projects(socket.assigns.current_user)
+    assign(socket, projects: projects)
+  end
+end
+```
+
+In your context:
+
+```elixir
+defmodule MyApp.Project do
+  def delete!(user, project_id) do
+    project = Repo.get!(Project, project_id)
+    
+    if can_delete?(user, project) do
+      Repo.delete!(project)
+      true
+    else
+      raise "Unauthorized"
+    end
+  end
+  
+  defp can_delete?(user, project) do
+    project.owner_id == user.id || user.role == :admin
+  end
+end
+```
+
+<Warning>
+**Always verify permissions on the server**
+
+Never trust client-side UI state for authorization. Users can send events directly to your server.
+</Warning>
+
+## Disconnecting Live Users
+
+Because LiveView maintains a permanent connection, changes like logout or account revocation won't reflect until the user reloads the page.
+
+### Using `live_socket_id`
+
+Set a `live_socket_id` in the session when logging in:
+
+```elixir
+conn
+|> put_session(:current_user_id, user.id)
+|> put_session(:live_socket_id, "users_socket:#{user.id}")
+```
+
+Now all LiveView sockets are identified by this ID. Disconnect all live users with:
+
+```elixir
+MyAppWeb.Endpoint.broadcast("users_socket:#{user.id}", "disconnect", %{})
+```
+
+<Info>
+If you use `mix phx.gen.auth`, lines for this are already present in the generated code, using a `user_token` instead of `user_id`.
+</Info>
+
+### When to Disconnect
+
+- User logs out
+- User account is deleted
+- User permissions are revoked
+- User password is changed
+- Session is invalidated
+
+### How It Works
+
+<Steps>
+  <Step title="Broadcast disconnect">
+    Server broadcasts "disconnect" message to the live_socket_id.
+  </Step>
+  <Step title="LiveView disconnects">
+    All LiveView connections with that ID are disconnected.
+  </Step>
+  <Step title="Client attempts reconnection">
+    The client automatically tries to reconnect.
+  </Step>
+  <Step title="Mount fails or redirects">
+    If the user is no longer logged in, mount fails or redirects to login.
+  </Step>
+</Steps>
+
+### Shared with Phoenix Channels
+
+This is the same mechanism provided by `Phoenix.Channel`, so it works for both LiveViews and Channels.
+
+## Complete Example
+
+### Router
+
+```elixir
+scope "/" do
+  pipe_through [:browser, :redirect_if_authenticated]
+  
+  live "/login", LoginLive
+  live "/register", RegisterLive
+end
+
+scope "/" do
+  pipe_through [:browser, :require_authenticated_user]
+
+  live_session :authenticated, on_mount: MyAppWeb.UserLiveAuth do
+    live "/", HomeLive
+    live "/dashboard", DashboardLive
+    live "/projects", ProjectsLive
+  end
+end
+
+scope "/admin" do
+  pipe_through [:browser, :require_admin_user]
+
+  live_session :admin,
+    on_mount: MyAppWeb.AdminLiveAuth,
+    root_layout: {MyAppWeb.Layouts, :admin} do
+    live "/admin", AdminDashboardLive
+    live "/admin/users", AdminUsersLive
+  end
+end
+```
+
+### UserLiveAuth Hook
+
+```elixir
+defmodule MyAppWeb.UserLiveAuth do
+  import Phoenix.LiveView
+  import Phoenix.Component
+
+  def on_mount(:default, _params, %{"user_token" => user_token}, socket) do
+    socket = assign_new(socket, :current_user, fn ->
+      MyAppWeb.Accounts.get_user_by_session_token(user_token)
+    end)
+
+    case socket.assigns.current_user do
+      nil ->
+        {:halt, redirect(socket, to: "/login")}
+      
+      %{confirmed_at: nil} ->
+        {:halt, redirect(socket, to: "/confirm")}
+      
+      user ->
+        {:cont, socket}
+    end
+  end
+
+  def on_mount(:default, _params, _session, socket) do
+    {:halt, redirect(socket, to: "/login")}
+  end
+end
+```
+
+### AdminLiveAuth Hook
+
+```elixir
+defmodule MyAppWeb.AdminLiveAuth do
+  import Phoenix.LiveView
+  import Phoenix.Component
+
+  def on_mount(:default, _params, %{"user_token" => user_token}, socket) do
+    socket = assign_new(socket, :current_user, fn ->
+      MyAppWeb.Accounts.get_user_by_session_token(user_token)
+    end)
+
+    if socket.assigns.current_user && socket.assigns.current_user.role == :admin do
+      {:cont, socket}
+    else
+      {:halt, redirect(socket, to: "/")}
+    end
+  end
+
+  def on_mount(:default, _params, _session, socket) do
+    {:halt, redirect(socket, to: "/login")}
+  end
+end
+```
+
+## Best Practices
+
+1. **Use `live_session` for authentication boundaries**: Different user types (user vs admin) should have separate live sessions
+2. **Implement `on_mount` hooks**: Centralize authentication logic in reusable hooks
+3. **Verify in events**: Always check permissions in `handle_event` callbacks
+4. **Set `live_socket_id`**: Enable disconnecting users when their session is invalidated
+5. **Use `assign_new`**: Avoid redundant database queries across parent-child LiveViews
+6. **Match on plug logic**: Ensure LiveView auth matches your plug auth logic
+7. **Test auth paths**: Test both authenticated and unauthenticated scenarios
+8. **Use context functions**: Keep authorization logic in your context modules
+
+## Security Checklist
+
+- [ ] Authentication logic exists in both plugs and `on_mount`
+- [ ] `live_session` groups separate auth requirements
+- [ ] `on_mount` hooks validate user session
+- [ ] Resource access is verified in `mount/3`
+- [ ] Action permissions are checked in `handle_event/3`
+- [ ] `live_socket_id` is set for disconnecting users
+- [ ] CSRF tokens are validated (automatic in Phoenix)
+- [ ] Session data is signed and encrypted (automatic in Phoenix)
+- [ ] Authorization tests cover all scenarios
+
+## Summary
+
+The important concepts:
+
+- **`live_session`**: Draw boundaries between groups of LiveViews with different authentication requirements
+- **Authentication in mount**: Shared between regular web requests (via plugs) and LiveViews (via `on_mount`)
+- **Authorization in mount**: Check if user can see this page
+- **Authorization in events**: Check if user can perform this action
+- **Disconnect mechanism**: Use `live_socket_id` to disconnect users when sessions are invalidated
+
+These security requirements are the same for both regular web requests and LiveViews - LiveView simply provides convenient hooks and mechanisms to implement them.

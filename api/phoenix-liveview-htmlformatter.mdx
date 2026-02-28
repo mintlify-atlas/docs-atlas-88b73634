@@ -1,0 +1,334 @@
+---
+title: Phoenix.LiveView.HTMLFormatter
+description: API reference for Phoenix.LiveView.HTMLFormatter module
+---
+
+Format HEEx templates from `.heex` files or `~H` sigils.
+
+## Overview
+
+The `Phoenix.LiveView.HTMLFormatter` is a `mix format` plugin that automatically formats HEEx templates. It understands HTML structure, Elixir expressions, and Phoenix LiveView components.
+
+## Setup
+
+Add it as a plugin to your `.formatter.exs` file:
+
+```elixir
+[
+  plugins: [Phoenix.LiveView.HTMLFormatter],
+  inputs: ["*.{heex,ex,exs}", "{config,lib,test}/**/*.{heex,ex,exs}"],
+  # ... other options
+]
+```
+
+<Note>
+For umbrella projects, you must also add `:phoenix_live_view` to deps in the root `mix.exs` and add the plugin to the root `.formatter.exs`.
+</Note>
+
+## Configuration Options
+
+### line_length
+
+The maximum line length for formatting. Defaults to 98 characters (Elixir formatter default).
+
+```elixir
+[
+  plugins: [Phoenix.LiveView.HTMLFormatter],
+  line_length: 120
+]
+```
+
+### heex_line_length
+
+Override line length specifically for HEEx templates:
+
+```elixir
+[
+  plugins: [Phoenix.LiveView.HTMLFormatter],
+  line_length: 98,
+  heex_line_length: 120
+]
+```
+
+### migrate_eex_to_curly_interpolation
+
+Automatically migrate single expression `<%= ... %>` EEx to curly braces syntax. Defaults to `true`.
+
+```elixir
+[
+  plugins: [Phoenix.LiveView.HTMLFormatter],
+  migrate_eex_to_curly_interpolation: true
+]
+```
+
+**Before:**
+```heex
+<div><%= @name %></div>
+```
+
+**After:**
+```heex
+<div>{@name}</div>
+```
+
+### attribute_formatters
+
+Specify custom formatters for certain attributes:
+
+```elixir
+[
+  plugins: [Phoenix.LiveView.HTMLFormatter],
+  attribute_formatters: %{class: MyApp.ClassFormatter}
+]
+```
+
+The formatter module should implement attribute formatting logic.
+
+### tag_formatters
+
+Specify formatters for `<style>` and `<script>` tag contents:
+
+```elixir
+[
+  plugins: [Phoenix.LiveView.HTMLFormatter],
+  tag_formatters: %{
+    script: MyApp.PrettierFormatter,
+    style: MyApp.CSSFormatter
+  }
+]
+```
+
+See `Phoenix.LiveView.HTMLFormatter.TagFormatter` for implementation details.
+
+### inline_matcher
+
+List of regular expressions to determine if a component should be treated as inline:
+
+```elixir
+[
+  plugins: [Phoenix.LiveView.HTMLFormatter],
+  inline_matcher: ["link", "button", "icon"]
+]
+```
+
+Defaults to `["link", "button"]`. Set to `[]` to disable.
+
+## Formatting Behavior
+
+### Block vs Inline Elements
+
+The formatter distinguishes between block-level and inline elements:
+
+**Input:**
+```heex
+<section><h1>   <b>{@user.name}</b></h1></section>
+```
+
+**Output:**
+```heex
+<section>
+  <h1><b>{@user.name}</b></h1>
+</section>
+```
+
+- Block elements (`<section>`, `<h1>`) start on new lines
+- Inline elements (`<b>`) stay on the same line if they fit
+
+### Intentional Line Breaks
+
+The formatter preserves intentional spacing:
+
+```heex
+<section>
+  <h1>
+    <b>{@user.name}</b>
+  </h1>
+</section>
+```
+
+This will be kept as-is, respecting your intentional line breaks.
+
+### Multi-line Attributes
+
+Attributes are placed on separate lines when they don't fit:
+
+**Input:**
+```heex
+<section id="user-section-id" class="sm:focus:block flex w-full p-3" phx-click="send-event">
+  <p>Hi</p>
+</section>
+```
+
+**Output:**
+```heex
+<section
+  id="user-section-id"
+  class="sm:focus:block flex w-full p-3"
+  phx-click="send-event"
+>
+  <p>Hi</p>
+</section>
+```
+
+### Multiple Newlines
+
+Multiple consecutive blank lines are collapsed to one:
+
+**Input:**
+```heex
+<p>
+  text
+
+
+  text
+</p>
+```
+
+**Output:**
+```heex
+<p>
+  text
+
+  text
+</p>
+```
+
+### Elixir Expressions
+
+Elixir expressions with `do...end` are not reformatted by the HEEx formatter (but their contents are):
+
+**Input:**
+```eex
+<%= live_redirect(
+       to: "/my/path",
+  class: "my class"
+) do %>
+        My Link
+<% end %>
+```
+
+**Output:**
+```eex
+<%= live_redirect(
+       to: "/my/path",
+  class: "my class"
+) do %>
+  My Link
+<% end %>
+```
+
+Only the content "My Link" is formatted; the Elixir expression remains as-is.
+
+## Inline Elements
+
+The formatter treats these as inline elements by default:
+
+- `<a>`, `<abbr>`, `<acronym>`, `<audio>`
+- `<b>`, `<bdi>`, `<bdo>`, `<big>`, `<br>`, `<button>`
+- `<canvas>`, `<cite>`, `<code>`
+- `<data>`, `<datalist>`, `<del>`, `<dfn>`
+- `<em>`, `<embed>`
+- `<i>`, `<iframe>`, `<img>`, `<input>`, `<ins>`
+- `<kbd>`
+- `<label>`
+- `<map>`, `<mark>`, `<meter>`
+- `<noscript>`
+- `<object>`, `<output>`
+- `<picture>`, `<progress>`
+- `<q>`
+- `<ruby>`
+- `<s>`, `<samp>`, `<select>`, `<slot>`, `<small>`, `<span>`, `<strong>`, `<sub>`, `<sup>`, `<svg>`
+- `<template>`, `<textarea>`, `<time>`
+- `<u>`, `<tt>`
+- `<var>`, `<video>`
+- `<wbr>`
+- Components matching `:inline_matcher` patterns
+
+All other tags are treated as block elements.
+
+### Inline Whitespace Handling
+
+Inline elements are not formatted when there's no whitespace before or after them:
+
+```heex
+<p>Hello<b>World</b>!</p>
+```
+
+This prevents adding unwanted whitespace that would affect rendering.
+
+## Skip Formatting
+
+Use the `phx-no-format` attribute to prevent formatting of a specific element:
+
+**Source code:**
+```heex
+<.textarea phx-no-format>My   content</.textarea>
+```
+
+**Rendered (attribute is removed):**
+```html
+<textarea>My   content</textarea>
+```
+
+## Mix Format Integration
+
+The formatter implements the `Mix.Tasks.Format` behavior.
+
+### features/1
+
+Returns the sigils and extensions this formatter handles:
+
+```elixir
+@impl Mix.Tasks.Format
+def features(_opts) do
+  [sigils: [:H], extensions: [".heex"]]
+end
+```
+
+### format/2
+
+Formats the given HEEx source:
+
+```elixir
+@impl Mix.Tasks.Format
+def format(source, opts)
+```
+
+<ParamField path="source" type="binary()" required>
+  The HEEx template source code
+</ParamField>
+
+<ParamField path="opts" type="keyword()" required>
+  Formatting options including:
+  - `:line_length` - Maximum line length
+  - `:heex_line_length` - HEEx-specific line length
+  - `:sigil` - The sigil being formatted (`:H`)
+  - `:attribute_formatters` - Custom attribute formatters
+  - `:tag_formatters` - Custom tag formatters
+  - `:inline_matcher` - Inline component patterns
+</ParamField>
+
+<ResponseField name="result" type="binary()">
+  The formatted source code
+</ResponseField>
+
+## Editor Support
+
+Most editors with `mix format` integration will automatically format `.heex` files and `~H` sigils:
+
+- **VS Code**: [Formatting HEEx templates in VS Code](https://pragmaticstudio.com/tutorials/formatting-heex-templates-in-vscode)
+- **Emacs**: Works with elixir-mode and mix-format
+- **Vim/Neovim**: Works with vim-mix-format plugins
+
+## Example Workflow
+
+```bash
+# Format all files
+mix format
+
+# Format specific file
+mix format lib/my_app_web/live/page_live.ex
+
+# Check if files are formatted
+mix format --check-formatted
+```
