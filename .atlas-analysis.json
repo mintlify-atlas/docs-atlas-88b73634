@@ -1,0 +1,156 @@
+{
+  "projectType": "framework",
+  "projectName": "Phoenix LiveView",
+  "projectDescription": "Rich, real-time user experiences with server-rendered HTML for Phoenix applications",
+  "theme": "palm",
+  "primaryColor": "#F05423",
+  "lightColor": "#FD7E55",
+  "darkColor": "#D94A1F",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "core/liveview-lifecycle",
+              "core/components",
+              "core/live-components",
+              "core/templates",
+              "core/assigns-state"
+            ]
+          },
+          {
+            "group": "Server-Side Features",
+            "pages": [
+              "server/live-navigation",
+              "server/async-operations",
+              "server/uploads",
+              "server/live-layouts",
+              "server/error-handling",
+              "server/telemetry",
+              "server/deployments",
+              "server/security",
+              "server/internationalization"
+            ]
+          },
+          {
+            "group": "Client-Side Integration",
+            "pages": [
+              "client/bindings",
+              "client/js-interop",
+              "client/form-bindings",
+              "client/js-commands",
+              "client/hooks",
+              "client/syncing-changes",
+              "client/external-uploads"
+            ]
+          },
+          {
+            "group": "Testing",
+            "pages": [
+              "testing/overview",
+              "testing/liveview-tests",
+              "testing/component-tests"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/streams",
+              "advanced/change-tracking",
+              "advanced/debugging",
+              "advanced/performance"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core Modules",
+            "pages": [
+              "api/phoenix-liveview",
+              "api/phoenix-component",
+              "api/phoenix-live-component",
+              "api/phoenix-liveview-js"
+            ]
+          },
+          {
+            "group": "Routing & Controllers",
+            "pages": [
+              "api/phoenix-liveview-router",
+              "api/phoenix-liveview-controller"
+            ]
+          },
+          {
+            "group": "Testing",
+            "pages": [
+              "api/phoenix-liveviewtest"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "api/phoenix-liveview-socket",
+              "api/phoenix-liveview-htmlformatter",
+              "api/phoenix-liveview-logger"
+            ]
+          },
+          {
+            "group": "Uploads",
+            "pages": [
+              "api/phoenix-liveview-uploadconfig",
+              "api/phoenix-liveview-uploadentry",
+              "api/phoenix-liveview-uploadwriter"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Real-time server-rendered HTML with minimal diffs over WebSocket",
+    "Declarative HEEx templating language with components and slots",
+    "Stateful LiveView and LiveComponent abstractions",
+    "Built-in form validation and file upload support",
+    "JavaScript interoperability with client-side hooks and commands",
+    "Live navigation without full page reloads",
+    "Async operations with loading states",
+    "Comprehensive testing utilities",
+    "Change tracking for optimized updates"
+  ],
+  "publicApiSurface": [
+    "Phoenix.LiveView",
+    "Phoenix.Component",
+    "Phoenix.LiveComponent",
+    "Phoenix.LiveView.JS",
+    "Phoenix.LiveView.Router",
+    "Phoenix.LiveView.Controller",
+    "Phoenix.LiveViewTest",
+    "mount/3",
+    "handle_event/3",
+    "handle_params/3",
+    "handle_info/2",
+    "render/1",
+    "update/2",
+    "assign/2",
+    "assign/3",
+    "assign_async/3",
+    "push_event/3",
+    "push_navigate/2",
+    "push_patch/2",
+    "live_render/3",
+    "live_component/1"
+  ]
+}
